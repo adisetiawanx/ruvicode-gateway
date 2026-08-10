@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -36,6 +37,27 @@ func NewClient(baseURL string, apiKeys []string) *ProviderClient {
 // Name returns the registry identifier for this provider.
 func (p *ProviderClient) Name() string {
 	return DefaultName
+}
+
+// endpoint joins a path onto the OpenAI-compatible surface. The configured
+// base URL may already include "/v1" (or not), so the suffix is never added
+// twice.
+func (p *ProviderClient) endpoint(path string) string {
+	base := strings.TrimSuffix(p.baseURL, "/")
+	if !strings.HasSuffix(base, "/v1") {
+		base += "/v1"
+	}
+	return base + path
+}
+
+// rootEndpoint joins a path onto the API root (outside the /v1 surface), used
+// for non-versioned endpoints such as market pricing.
+func (p *ProviderClient) rootEndpoint(path string) string {
+	base := strings.TrimSuffix(p.baseURL, "/")
+	if strings.HasSuffix(base, "/v1") {
+		base = strings.TrimSuffix(base, "/v1")
+	}
+	return base + path
 }
 
 // ChatCompletion forwards a request to the upstream provider and returns
@@ -71,7 +93,7 @@ func (p *ProviderClient) ChatCompletion(ctx context.Context, req *ChatRequest) (
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := p.baseURL + "/v1/chat/completions"
+	url := p.endpoint("/chat/completions")
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -144,7 +166,7 @@ func parseUsage(body []byte) *Usage {
 
 // ListModels returns all models available from this provider.
 func (p *ProviderClient) ListModels(ctx context.Context) ([]ModelInfo, error) {
-	url := p.baseURL + "/v1/models"
+	url := p.endpoint("/models")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -187,7 +209,7 @@ func (p *ProviderClient) ListModels(ctx context.Context) ([]ModelInfo, error) {
 
 // FetchPricing returns current pricing data from this provider.
 func (p *ProviderClient) FetchPricing(ctx context.Context) ([]PricingData, error) {
-	url := p.baseURL + "/api/markets"
+	url := p.rootEndpoint("/api/markets")
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
