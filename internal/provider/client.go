@@ -137,31 +137,46 @@ func (p *ProviderClient) ChatCompletion(ctx context.Context, req *ChatRequest) (
 			return nil, fmt.Errorf("read response: %w", err)
 		}
 		result.Body = bodyBytes
-		result.Usage = parseUsage(bodyBytes)
+		result.Usage, result.UpstreamCost = parseUsage(bodyBytes)
 	}
 
 	return result, nil
 }
 
-// parseUsage extracts token usage from an OpenAI-compatible response body.
-func parseUsage(body []byte) *Usage {
+// parseUsage extracts token usage and upstream cost from an OpenAI-compatible
+// response body. It is tolerant of provider-specific usage detail fields
+// (e.g. completion_tokens_details as an object), which would otherwise make
+// the whole unmarshal fail and silently zero out billing.
+func parseUsage(body []byte) (*Usage, float64) {
 	var resp struct {
 		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			ReasoningTokens  int `json:"completion_tokens_details"`
+			PromptTokens     int             `json:"prompt_tokens"`
+			CompletionTokens int             `json:"completion_tokens"`
+			Details          json.RawMessage `json:"completion_tokens_details"`
 		} `json:"usage"`
+		Cost struct {
+			USD float64 `json:"usd"`
+		} `json:"cost"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil
+		return nil, 0
 	}
 	if resp.Usage.PromptTokens == 0 && resp.Usage.CompletionTokens == 0 {
-		return nil
+		return nil, resp.Cost.USD
 	}
-	return &Usage{
+
+	u := &Usage{
 		PromptTokens:     resp.Usage.PromptTokens,
 		CompletionTokens: resp.Usage.CompletionTokens,
 	}
+	if len(resp.Usage.Details) > 0 {
+		var reason struct {
+			ReasoningTokens int `json:"reasoning_tokens"`
+		}
+		_ = json.Unmarshal(resp.Usage.Details, &reason)
+		u.ReasoningTokens = reason.ReasoningTokens
+	}
+	return u, resp.Cost.USD
 }
 
 // ListModels returns all models available from this provider.

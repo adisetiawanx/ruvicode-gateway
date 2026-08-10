@@ -149,3 +149,40 @@ func TestClientHealthCheck(t *testing.T) {
 		t.Fatalf("HealthCheck error: %v", err)
 	}
 }
+
+// DeepSeek-style responses carry completion_tokens_details as an object plus
+// a provider cost block. The parser must tolerate both.
+func TestParseUsageDeepSeekStyle(t *testing.T) {
+	body := []byte(`{
+		"id":"chatcmpl-1","object":"chat.completion","model":"deepseek-v4-flash",
+		"usage":{"prompt_tokens":5,"completion_tokens":171,"total_tokens":176,
+		         "prompt_tokens_details":{"cached_tokens":0},
+		         "completion_tokens_details":{"reasoning_tokens":120}},
+		"cost":{"usd":0.000047715,"diem":0}
+	}`)
+
+	usage, cost := parseUsage(body)
+	if usage == nil {
+		t.Fatal("expected usage parsed despite completion_tokens_details object")
+	}
+	if usage.PromptTokens != 5 || usage.CompletionTokens != 171 {
+		t.Fatalf("expected usage 5/171, got %d/%d", usage.PromptTokens, usage.CompletionTokens)
+	}
+	if usage.ReasoningTokens != 120 {
+		t.Fatalf("expected reasoning 120, got %d", usage.ReasoningTokens)
+	}
+	if cost != 0.000047715 {
+		t.Fatalf("expected upstream cost 0.000047715, got %f", cost)
+	}
+}
+
+func TestParseUsagePlainOpenAI(t *testing.T) {
+	body := []byte(`{"usage":{"prompt_tokens":10,"completion_tokens":20}}`)
+	usage, cost := parseUsage(body)
+	if usage == nil || usage.PromptTokens != 10 || usage.CompletionTokens != 20 {
+		t.Fatalf("expected usage 10/20, got %+v", usage)
+	}
+	if cost != 0 {
+		t.Fatalf("expected zero cost, got %f", cost)
+	}
+}
