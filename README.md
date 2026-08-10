@@ -6,15 +6,25 @@ This repository is the Go gateway. It is the request-processing core of Ruvicode
 
 ## Status
 
-The gateway core is implemented. The server builds, boots, connects to PostgreSQL and Redis, and shuts down gracefully. The request pipeline is live: API key auth, per-key rate limiting, optimistic billing with wallet deduction, streaming and non-streaming chat completions, a model listing endpoint, and provider identity masking.
+The request pipeline is live end to end. A request arrives, the key is validated, the per-key rate limit is enforced, the balance is pre-checked and held, the provider is resolved and called, the response is streamed back with sanitized headers, usage is parsed from the final chunk, the wallet is settled atomically, and a usage record is inserted.
 
-Implemented so far:
+Working today:
 
-- ADR-016 project setup, config, stores, health check
-- ADR-017 provider abstraction, registry, key pool, concrete provider client
-- ADR-018 gateway core, auth, rate limiting, chat proxy, billing integration
+- Server setup, config, health check, graceful shutdown
+- API key auth with a Redis cache and a PostgreSQL fallback
+- Per-key sliding-window rate limiting
+- Optimistic pre-deduction billing with atomic wallet settlement
+- Streaming and non-streaming chat completions plus a model listing endpoint
+- Provider abstraction with key pool rotation and identity masking
+- Verified live against a real provider using a cheap model
 
-Remaining work is tracked in the architecture decision records (ADR-019 billing reconciliation, ADR-020 pricing worker, ADR-021 API key management, ADR-022 masking hardening, ADR-023 deployment, ADR-024 USDC monitoring, ADR-025 observability).
+Not built yet:
+
+- Automatic price sync. Prices in the database are seeded and go stale, which can flip the margin negative, so the sync worker is required before production.
+- Hourly billing reconciliation against the costs reported by the upstream.
+- API key management endpoints (key creation and revocation live in the dashboard).
+- Anthropic-compatible message translation.
+- Deployment, USDC deposit monitoring, and metrics and alerting.
 
 ## Stack
 
