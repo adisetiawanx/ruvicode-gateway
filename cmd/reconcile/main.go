@@ -42,7 +42,7 @@ func main() {
 		slog.Error("reconcile worker: redis connect failed", "error", err)
 		os.Exit(1)
 	}
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	engine := billing.New(pg, rdb)
 

@@ -43,7 +43,7 @@ func main() {
 		slog.Error("pricing worker: redis connect failed", "error", err)
 		os.Exit(1)
 	}
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	// Register the sole MVP provider (identity masked as the generic name).
 	registry := provider.NewRegistry(provider.DefaultName)
