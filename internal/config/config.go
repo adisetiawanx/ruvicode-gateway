@@ -33,6 +33,9 @@ type Config struct {
 	PricingCronInterval string `env:"PRICING_CRON_INTERVAL" envDefault:"2m"`
 	PricingSpreadPP     int    `env:"PRICING_SPREAD_PP" envDefault:"20"`
 
+	// Reconciliation (billing safety net)
+	ReconcileCronInterval string `env:"RECONCILE_CRON_INTERVAL" envDefault:"1h"`
+
 	// Rate limiting
 	GlobalRPM int `env:"GLOBAL_RPM" envDefault:"60"`
 
