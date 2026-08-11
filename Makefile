@@ -28,7 +28,12 @@ docker-run:
 	docker run --env-file .env -p 8080:8080 ruvicode-gateway
 
 lint:
-	golangci-lint run ./...
+	# --allow-parallel-runners: skip the file lock golangci-lint takes on
+	# start. On this Windows setup the lock can go stale when the temp dir
+	# changes (MSYS path mangling), which makes every run fail with
+	# "parallel golangci-lint is running" until the lock file is found and
+	# removed. A solo dev does not run two lints at once.
+	golangci-lint run ./... --allow-parallel-runners
 
 tidy:
 	go mod tidy
