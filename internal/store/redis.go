@@ -26,7 +26,7 @@ func NewRedisStore(redisURL string) (*RedisStore, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
-		client.Close()
+		_ = client.Close()
 		return nil, fmt.Errorf("ping redis: %w", err)
 	}
 
