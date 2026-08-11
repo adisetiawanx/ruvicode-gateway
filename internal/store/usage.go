@@ -34,9 +34,11 @@ func (s *PostgresStore) InsertUsageRecord(ctx context.Context, record *UsageReco
 }
 
 // UpdateLastUsed refreshes api_keys.last_used_at fire-and-forget.
+// Stored as UTC wall clock to stay consistent with created_at (NOW() in the
+// UTC container); timestamp columns carry no time zone.
 func (s *PostgresStore) UpdateLastUsed(ctx context.Context, keyID string) {
 	_, _ = s.Pool.Exec(ctx,
-		"UPDATE api_keys SET last_used_at = $1 WHERE id = $2", time.Now(), keyID)
+		"UPDATE api_keys SET last_used_at = $1 WHERE id = $2", time.Now().UTC(), keyID)
 }
 
 // ListActiveModels returns the names of all active models from model_prices.
