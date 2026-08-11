@@ -40,7 +40,7 @@ func TestClientChatCompletionNonStreaming(t *testing.T) {
 		w.Header().Set("X-RateLimit-Remaining", "1190")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"id":"x","usage":{"prompt_tokens":10,"completion_tokens":20}}`))
+		_, _ = w.Write([]byte(`{"id":"x","usage":{"prompt_tokens":10,"completion_tokens":20}}`))
 	})
 
 	client := NewClient(srv.URL, []string{"inf_test"})
@@ -65,7 +65,7 @@ func TestClientInjectsStreamOptions(t *testing.T) {
 		captured = body
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("data: [DONE]\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	})
 
 	client := NewClient(srv.URL, []string{"inf_test"})
@@ -76,7 +76,7 @@ func TestClientInjectsStreamOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChatCompletion error: %v", err)
 	}
-	defer result.Stream.Close()
+	defer func() { _ = result.Stream.Close() }()
 
 	so, ok := captured["stream_options"].(map[string]interface{})
 	if !ok {
@@ -95,9 +95,9 @@ func TestClientStreamingReturnsBody(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fl, _ := w.(http.Flusher)
-		w.Write([]byte("data: {\"id\":\"1\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"id\":\"1\"}\n\n"))
 		fl.Flush()
-		w.Write([]byte("data: [DONE]\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	})
 
 	client := NewClient(srv.URL, []string{"inf_test"})
@@ -105,7 +105,7 @@ func TestClientStreamingReturnsBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChatCompletion error: %v", err)
 	}
-	defer result.Stream.Close()
+	defer func() { _ = result.Stream.Close() }()
 
 	raw, _ := io.ReadAll(result.Stream)
 	text := string(raw)
@@ -117,7 +117,7 @@ func TestClientStreamingReturnsBody(t *testing.T) {
 func TestClientReturnsProviderError(t *testing.T) {
 	srv := startFakeServer(t, func(w http.ResponseWriter, r *http.Request, body map[string]interface{}) {
 		w.WriteHeader(http.StatusPaymentRequired)
-		w.Write([]byte(`{"error":{"message":"some internal detail"}}`))
+		_, _ = w.Write([]byte(`{"error":{"message":"some internal detail"}}`))
 	})
 
 	client := NewClient(srv.URL, []string{"inf_test"})
@@ -141,7 +141,7 @@ func TestClientHealthCheck(t *testing.T) {
 	srv := startFakeServer(t, func(w http.ResponseWriter, r *http.Request, body map[string]interface{}) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"data":[]}`))
+		_, _ = w.Write([]byte(`{"data":[]}`))
 	})
 
 	client := NewClient(srv.URL, []string{"inf_test"})
