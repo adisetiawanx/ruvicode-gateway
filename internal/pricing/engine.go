@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ruvicode/gateway/internal/provider"
@@ -27,21 +28,30 @@ type ModelPrice struct {
 	UserDiscountPct  float64 `json:"user_discount_pct"`
 }
 
-// Engine reads and caches pricing.
+// Engine reads and caches pricing, and runs the ADR-020 sync worker.
 type Engine struct {
 	pg       *store.PostgresStore
 	rdb      *store.RedisStore
 	registry *provider.Registry // used by the ADR-020 sync worker
 	spreadPP int                // percentage-point spread for the sync worker
+
+	// staleness tracking for the sync worker
+	mu                  sync.Mutex
+	consecutiveFailures int
+	maxFailures         int
 }
 
 // New builds a pricing Engine.
 func New(pg *store.PostgresStore, rdb *store.RedisStore, registry *provider.Registry, spreadPP int) *Engine {
+	if spreadPP <= 0 {
+		spreadPP = 20
+	}
 	return &Engine{
-		pg:       pg,
-		rdb:      rdb,
-		registry: registry,
-		spreadPP: spreadPP,
+		pg:          pg,
+		rdb:         rdb,
+		registry:    registry,
+		spreadPP:    spreadPP,
+		maxFailures: 3,
 	}
 }
 
