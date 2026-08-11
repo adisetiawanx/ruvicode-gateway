@@ -16,12 +16,12 @@ Working today:
 - Optimistic pre-deduction billing with atomic wallet settlement
 - Streaming and non-streaming chat completions plus a model listing endpoint
 - Provider abstraction with key pool rotation and identity masking
+- Automatic price sync that polls the provider market, applies the spread, and refreshes the Postgres table and Redis cache (pricing worker)
+- Hourly billing reconciliation against the costs reported by the upstream (reconcile worker)
 - Verified live against a real provider using a cheap model
 
 Not built yet:
 
-- Automatic price sync. Prices in the database are seeded and go stale, which can flip the margin negative, so the sync worker is required before production.
-- Hourly billing reconciliation against the costs reported by the upstream.
 - API key management endpoints (key creation and revocation live in the dashboard).
 - Anthropic-compatible message translation.
 - Deployment, USDC deposit monitoring, and metrics and alerting.
@@ -38,8 +38,8 @@ Not built yet:
 ## Repository layout
 
 - `cmd/gateway` the HTTP gateway entrypoint
-- `cmd/pricing` the pricing worker entrypoint (placeholder)
-- `cmd/reconcile` the billing reconciliation worker entrypoint (placeholder)
+- `cmd/pricing` the pricing worker entrypoint
+- `cmd/reconcile` the billing reconciliation worker entrypoint
 - `internal/config` environment-based configuration
 - `internal/server` HTTP server and route wiring
 - `internal/handler` chat, models, and usage capture handlers
