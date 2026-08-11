@@ -64,7 +64,14 @@ func (e *Engine) Reconcile(ctx context.Context) (*ReconcileResult, error) {
 }
 
 // ReconcileWindow runs the reconciliation over usage at or after since.
+//
+// usage_records.created_at is a timestamp WITHOUT time zone holding UTC wall
+// clock times (the container runs UTC), so the window boundary is normalized
+// to UTC before binding. Without this, pgx binds a local-time go value by its
+// wall clock (e.g. 23:36 +08 instead of 15:36 UTC) and the window silently
+// misses records.
 func (e *Engine) ReconcileWindow(ctx context.Context, since time.Time) (*ReconcileResult, error) {
+	since = since.UTC()
 	var ourTotal, upstreamTotal float64
 	err := e.pg.Pool.QueryRow(ctx, `
 		SELECT
