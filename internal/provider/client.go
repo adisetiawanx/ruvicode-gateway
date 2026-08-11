@@ -54,9 +54,7 @@ func (p *ProviderClient) endpoint(path string) string {
 // for non-versioned endpoints such as market pricing.
 func (p *ProviderClient) rootEndpoint(path string) string {
 	base := strings.TrimSuffix(p.baseURL, "/")
-	if strings.HasSuffix(base, "/v1") {
-		base = strings.TrimSuffix(base, "/v1")
-	}
+	base = strings.TrimSuffix(base, "/v1")
 	return base + path
 }
 
@@ -113,7 +111,7 @@ func (p *ProviderClient) ChatCompletion(ctx context.Context, req *ChatRequest) (
 	}
 
 	if httpResp.StatusCode != http.StatusOK {
-		defer httpResp.Body.Close()
+		defer func() { _ = httpResp.Body.Close() }()
 		errorBody, _ := io.ReadAll(httpResp.Body)
 		return nil, &ProviderError{
 			StatusCode: httpResp.StatusCode,
@@ -131,7 +129,7 @@ func (p *ProviderClient) ChatCompletion(ctx context.Context, req *ChatRequest) (
 	}
 
 	if !req.Stream {
-		defer httpResp.Body.Close()
+		defer func() { _ = httpResp.Body.Close() }()
 		bodyBytes, err := io.ReadAll(httpResp.Body)
 		if err != nil {
 			return nil, fmt.Errorf("read response: %w", err)
@@ -192,7 +190,7 @@ func (p *ProviderClient) ListModels(ctx context.Context) ([]ModelInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("list models: unexpected status %d", resp.StatusCode)
 	}
@@ -235,7 +233,7 @@ func (p *ProviderClient) FetchPricing(ctx context.Context) ([]PricingData, error
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch pricing: unexpected status %d", resp.StatusCode)
 	}
