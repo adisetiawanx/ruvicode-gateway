@@ -2,6 +2,7 @@ package masking
 
 import (
 	"log/slog"
+	"regexp"
 	"strings"
 )
 
@@ -28,4 +29,22 @@ func CheckBodyForLeaks(body []byte, requestID string) {
 			break
 		}
 	}
+}
+
+var (
+	costWithLeadComma  = regexp.MustCompile(`,\s*"cost"\s*:\s*\{[^{}]*\}`)
+	costWithTrailComma = regexp.MustCompile(`"cost"\s*:\s*\{[^{}]*\},\s*`)
+	costBare           = regexp.MustCompile(`"cost"\s*:\s*\{[^{}]*\}`)
+)
+
+// StripCostField removes the provider-reported "cost" object from an
+// OpenAI-compatible JSON body or SSE chunk. The upstream cost is internal
+// margin data and must never reach the user, so any response that echoes it
+// verbatim (non-streaming bodies and the final streaming chunk) is stripped
+// here before forwarding. The provider cost is typically a flat object such
+// as {"usd":0.00001073,"diem":0}, so a brace-balanced scan is sufficient.
+func StripCostField(data []byte) []byte {
+	d := costWithLeadComma.ReplaceAll(data, nil)
+	d = costWithTrailComma.ReplaceAll(d, nil)
+	return costBare.ReplaceAll(d, nil)
 }
