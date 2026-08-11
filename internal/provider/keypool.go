@@ -58,7 +58,7 @@ func (p *KeyPool) Select() string {
 
 	var bestIdx = -1
 	var bestRemaining int64 = -1
-	var bestLastUsed int64 = time.Now().Unix()
+	bestLastUsed := time.Now().Unix()
 
 	for i := range p.keys {
 		if p.keys[i].key == "" {
