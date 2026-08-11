@@ -162,7 +162,7 @@ func (e *Engine) FinalizeDeduction(
 		e.ReleaseHold(ctx, userID, estimatedCost)
 		return
 	}
-	defer tx.Rollback(ctx) // no-op if committed
+	defer func() { _ = tx.Rollback(ctx) }() // no-op if committed
 
 	// Atomic wallet update: deduct the actual cost, only if the balance covers
 	// it. The optimistic hold lives in Redis (5s TTL cache), so Postgres held
