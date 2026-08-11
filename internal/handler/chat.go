@@ -146,14 +146,19 @@ func (h *ChatHandler) handleStreamResponse(
 	for scanner.Scan() {
 		line := scanner.Bytes()
 
+		if bytes.Contains(line, []byte(`"usage"`)) {
+			usageCapture.ParseFromChunk(line)
+		}
+
+		// Strip the provider-reported cost object. The upstream cost is
+		// internal margin data and must never reach the user, even when the
+		// final streaming chunk echoes it.
+		line = masking.StripCostField(line)
+
 		_, _ = w.Write(line)
 		_, _ = w.Write([]byte("\n"))
 		if flusher != nil {
 			flusher.Flush()
-		}
-
-		if bytes.Contains(line, []byte(`"usage"`)) {
-			usageCapture.ParseFromChunk(line)
 		}
 
 		if bytes.Equal(bytes.TrimSpace(line), []byte("data: [DONE]")) {
@@ -175,7 +180,7 @@ func (h *ChatHandler) handleStreamResponse(
 		PromptTokens:     usageTokens(usageCapture.Usage).prompt,
 		CompletionTokens: usageTokens(usageCapture.Usage).completion,
 		APIKeyID:         keyData.KeyID,
-		UpstreamCost:     result.UpstreamCost,
+		UpstreamCost:     usageCapture.UpstreamCost,
 		RequestID:        requestID,
 	})
 
@@ -224,7 +229,9 @@ func (h *ChatHandler) handleNonStreamResponse(
 	w.Header().Set("X-Ruvicode-Version", "1.0")
 	w.Header().Set("X-Cost", masking.FormatCost(actualCost))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(result.Body)
+	// Strip the provider-reported cost object from the body (upstream cost is
+	// internal margin data); the user already receives the cost via X-Cost.
+	_, _ = w.Write(masking.StripCostField(result.Body))
 }
 
 // messageCount returns the number of messages in the raw messages array.
