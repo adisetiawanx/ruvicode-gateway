@@ -18,6 +18,23 @@ func TestUsageCaptureParsesFinalChunk(t *testing.T) {
 	}
 }
 
+// TestUsageCaptureParsesUpstreamCost matches the real provider final chunk,
+// which reports the upstream settlement cost alongside usage. It is captured
+// for internal margin accounting only.
+func TestUsageCaptureParsesUpstreamCost(t *testing.T) {
+	uc := &UsageCapture{}
+	line := []byte(`data: {"id":"chatcmpl-1","usage":{"prompt_tokens":10,"completion_tokens":36,"completion_tokens_details":{"reasoning_tokens":33}},"cost":{"usd":0.00001073,"diem":0}}`)
+
+	uc.ParseFromChunk(line)
+
+	if uc.UpstreamCost != 0.00001073 {
+		t.Fatalf("expected upstream cost 0.00001073, got %f", uc.UpstreamCost)
+	}
+	if uc.Usage == nil || uc.Usage.ReasoningTokens != 33 {
+		t.Fatalf("expected reasoning tokens 33 captured, got %+v", uc.Usage)
+	}
+}
+
 func TestUsageCaptureIgnoresContentChunks(t *testing.T) {
 	uc := &UsageCapture{}
 	line := []byte(`data: {"id":"chatcmpl-1","choices":[{"delta":{"content":"Hello"}}]}`)
