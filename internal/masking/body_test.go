@@ -68,6 +68,61 @@ func TestStripCostFieldStandalone(t *testing.T) {
 	}
 }
 
+// TestSanitizeResponseBody rewrites the routed model and strips the provider
+// field from a streaming chunk (the shape observed live from the upstream).
+func TestSanitizeResponseBody(t *testing.T) {
+	in := []byte(`data: {"id":"gen-1","model":"deepseek/deepseek-v4-flash","provider":"DeepSeek","choices":[{"delta":{"content":"hi"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"cost":0,"is_byok":true,"cost_details":{"upstream_inference_cost":0.00002}}}`)
+	out := SanitizeResponseBody(in, "deepseek-v4-flash")
+	s := string(out)
+
+	if strings.Contains(s, `"model":"deepseek/deepseek-v4-flash"`) {
+		t.Fatalf("model prefix still present: %s", s)
+	}
+	if !strings.Contains(s, `"model":"deepseek-v4-flash"`) {
+		t.Fatalf("model not rewritten: %s", s)
+	}
+	for _, leaked := range []string{`"provider"`, `"cost"`, `"cost_details"`, `"is_byok"`, "DeepSeek"} {
+		if strings.Contains(s, leaked) {
+			t.Fatalf("upstream field %q still present: %s", leaked, s)
+		}
+	}
+	if !strings.Contains(s, `"delta":{"content":"hi"}`) {
+		t.Fatalf("content must survive: %s", s)
+	}
+	if !strings.Contains(s, `"prompt_tokens":1,"completion_tokens":1`) {
+		t.Fatalf("usage tokens must survive: %s", s)
+	}
+	// The scrubbed line must still be valid JSON after the data: prefix.
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(s, "data: ")), &struct{}{}); err != nil {
+		t.Fatalf("sanitized line is invalid JSON (%v): %s", err, s)
+	}
+}
+
+// TestSanitizeResponseBodyProviderTrailingComma covers provider mid-object.
+func TestSanitizeResponseBodyProviderTrailingComma(t *testing.T) {
+	in := []byte(`{"provider":"DeepSeek","id":"x","model":"deepseek/deepseek-v4-flash"}`)
+	out := SanitizeResponseBody(in, "deepseek-v4-flash")
+	s := string(out)
+
+	if strings.Contains(s, "DeepSeek") || strings.Contains(s, `deepseek/`) {
+		t.Fatalf("upstream identity leaked: %s", s)
+	}
+	var v any
+	if err := json.Unmarshal(out, &v); err != nil {
+		t.Fatalf("output is not valid JSON (%v): %s", err, s)
+	}
+}
+
+// TestSanitizeResponseBodyNoLeakFields leaves a clean body untouched except
+// the model rewrite.
+func TestSanitizeResponseBodyClean(t *testing.T) {
+	in := []byte(`{"id":"cmpl-1","model":"gpt-5.4","choices":[{"message":{"content":"ok"}}]}`)
+	out := SanitizeResponseBody(in, "gpt-5.4")
+	if string(out) != string(in) {
+		t.Fatalf("expected unchanged body, got %s", out)
+	}
+}
+
 // captureSlog runs fn with the default slog logger pointed at a buffer, then
 // returns what was written. The previous default is restored afterwards so
 // the rest of the suite logs normally.

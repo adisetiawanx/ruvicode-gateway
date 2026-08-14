@@ -147,14 +147,21 @@ func (h *ChatHandler) handleStreamResponse(
 	for scanner.Scan() {
 		line := scanner.Bytes()
 
+		// Never forward SSE comments or keep-alive lines (they can name
+		// upstream internals); EventSource ignores them anyway.
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 || trimmed[0] == ':' {
+			continue
+		}
+
 		if bytes.Contains(line, []byte(`"usage"`)) {
 			usageCapture.ParseFromChunk(line)
 		}
 
-		// Strip the provider-reported cost object. The upstream cost is
-		// internal margin data and must never reach the user, even when the
-		// final streaming chunk echoes it.
-		line = masking.StripCostField(line)
+		// Mask the chunk before forwarding: strip the upstream cost and
+		// provider fields, and rewrite the model to the requested id. The
+		// upstream identity must never reach the user (ADR-022).
+		line = masking.SanitizeResponseBody(line, modelPrice.Model)
 
 		_, _ = w.Write(line)
 		_, _ = w.Write([]byte("\n"))
@@ -162,7 +169,7 @@ func (h *ChatHandler) handleStreamResponse(
 			flusher.Flush()
 		}
 
-		if bytes.Equal(bytes.TrimSpace(line), []byte("data: [DONE]")) {
+		if bytes.Equal(trimmed, []byte("data: [DONE]")) {
 			break
 		}
 	}
@@ -235,9 +242,10 @@ func (h *ChatHandler) handleNonStreamResponse(
 	masking.SanitizeHeaders(w.Header(), requestID, limitVal, remainingVal)
 	w.Header().Set("X-Cost", masking.FormatCost(actualCost))
 	w.WriteHeader(http.StatusOK)
-	// Strip the provider-reported cost object from the body (upstream cost is
-	// internal margin data); the user already receives the cost via X-Cost.
-	_, _ = w.Write(masking.StripCostField(result.Body))
+	// Mask the body before writing: strip the upstream cost and provider
+	// fields and rewrite the model to the requested id (the user already
+	// receives the cost via X-Cost).
+	_, _ = w.Write(masking.SanitizeResponseBody(result.Body, modelPrice.Model))
 }
 
 // messageCount returns the number of messages in the raw messages array.
