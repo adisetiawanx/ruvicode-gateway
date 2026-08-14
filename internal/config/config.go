@@ -25,6 +25,13 @@ type Config struct {
 	// Providers (comma-separated list of active provider names)
 	ActiveProviders []string `env:"ACTIVE_PROVIDERS" envDefault:"provider"`
 
+	// Secret shared with the Next.js dashboard for the internal playground
+	// endpoint (POST /internal/playground/chat). When empty the endpoint is
+	// disabled. The web server sends this via the X-Internal-Token header so
+	// it can bill a signed-in user's wallet on their behalf without ever
+	// handling the user's full API key.
+	InternalAPIToken string `env:"INTERNAL_API_TOKEN"`
+
 	// Provider connection (generic naming, upstream identity masked)
 	ProviderBaseURL string   `env:"PROVIDER_BASE_URL"`
 	ProviderAPIKeys []string `env:"PROVIDER_API_KEYS"`

@@ -22,9 +22,21 @@ type APIKeyData struct {
 
 // GetAPIKeyByHash looks up an API key by its SHA-256 hash.
 func (s *PostgresStore) GetAPIKeyByHash(ctx context.Context, hash string) (*APIKeyData, error) {
+	return s.getAPIKey(ctx, "WHERE key_hash = $1", hash)
+}
+
+// GetAPIKeyByIDAndUser looks up an API key by its id, scoped to a user. It is
+// used by the internal playground endpoint, which the dashboard calls with a
+// signed-in user's key id (the full key is never stored or handled by the
+// web server).
+func (s *PostgresStore) GetAPIKeyByIDAndUser(ctx context.Context, userID, keyID string) (*APIKeyData, error) {
+	return s.getAPIKey(ctx, "WHERE id = $1 AND user_id = $2", keyID, userID)
+}
+
+func (s *PostgresStore) getAPIKey(ctx context.Context, where string, args ...any) (*APIKeyData, error) {
 	var data APIKeyData
 
-	err := s.Pool.QueryRow(ctx, `
+	query := `
 		SELECT
 			id,
 			user_id,
@@ -34,8 +46,9 @@ func (s *PostgresStore) GetAPIKeyByHash(ctx context.Context, hash string) (*APIK
 			spend_limit_monthly::text,
 			label
 		FROM api_keys
-		WHERE key_hash = $1
-	`, hash).Scan(
+		` + where
+
+	err := s.Pool.QueryRow(ctx, query, args...).Scan(
 		&data.KeyID,
 		&data.UserID,
 		&data.IsActive,
