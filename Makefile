@@ -1,7 +1,18 @@
-.PHONY: build run run-pricing run-reconcile test migrate-up migrate-down docker-build docker-run lint tidy
+.PHONY: build build-all build-pricing build-reconcile run run-pricing run-reconcile test migrate-up migrate-down docker-build docker-run lint tidy
 
 build:
-	go build -o bin/gateway cmd/gateway/main.go
+	@mkdir -p bin
+	go build -o bin/gateway.exe cmd/gateway/main.go
+
+build-pricing:
+	@mkdir -p bin
+	go build -o bin/pricing.exe cmd/pricing/main.go
+
+build-reconcile:
+	@mkdir -p bin
+	go build -o bin/reconcile.exe cmd/reconcile/main.go
+
+build-all: build build-pricing build-reconcile
 
 run:
 	go run cmd/gateway/main.go
