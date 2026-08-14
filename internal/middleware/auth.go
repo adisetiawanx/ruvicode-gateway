@@ -22,15 +22,22 @@ const (
 	APIKeyKey ctxKey = "api_key"
 )
 
+// apiKeyStore is the interface AuthMiddleware needs to resolve a key hash to
+// key data when the Redis cache misses. The concrete PostgresStore satisfies
+// it; the interface keeps the middleware testable without a live database.
+type apiKeyStore interface {
+	GetAPIKeyByHash(ctx context.Context, hash string) (*store.APIKeyData, error)
+}
+
 // AuthMiddleware validates rvcd_ Bearer API keys via the Redis cache with a
 // Postgres fallback. It fails closed (401) on missing or invalid keys.
 type AuthMiddleware struct {
 	rdb *store.RedisStore
-	pg  *store.PostgresStore
+	pg  apiKeyStore
 }
 
 // NewAuth builds an AuthMiddleware.
-func NewAuth(rdb *store.RedisStore, pg *store.PostgresStore) *AuthMiddleware {
+func NewAuth(rdb *store.RedisStore, pg apiKeyStore) *AuthMiddleware {
 	return &AuthMiddleware{rdb: rdb, pg: pg}
 }
 
