@@ -35,17 +35,24 @@ func (u *UsageCapture) ParseFromChunk(line []byte) {
 			PromptTokens     int             `json:"prompt_tokens"`
 			CompletionTokens int             `json:"completion_tokens"`
 			Details          json.RawMessage `json:"completion_tokens_details"`
+			Cost             json.RawMessage `json:"cost"`
+			CostDetails      *costDetailsObj `json:"cost_details"`
 		} `json:"usage"`
-		Cost struct {
-			USD float64 `json:"usd"`
-		} `json:"cost"`
+		Cost        json.RawMessage `json:"cost"`
+		CostDetails *costDetailsObj `json:"cost_details"`
 	}
 	if err := json.Unmarshal([]byte(jsonStr), &chunk); err != nil {
 		return
 	}
 
-	if chunk.Cost.USD > 0 {
-		u.UpstreamCost = chunk.Cost.USD
+	// Current upstream shape nests cost inside usage; older shapes put it at
+	// the top level of the chunk.
+	upstream := parseChunkUpstreamCost(chunk.Usage.Cost, chunk.Usage.CostDetails)
+	if upstream == 0 {
+		upstream = parseChunkUpstreamCost(chunk.Cost, chunk.CostDetails)
+	}
+	if upstream > 0 {
+		u.UpstreamCost = upstream
 	}
 
 	if chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
@@ -62,4 +69,32 @@ func (u *UsageCapture) ParseFromChunk(line []byte) {
 		}
 		u.Usage = usage
 	}
+}
+
+// costDetailsObj mirrors the settlement detail fields the upstream reports
+// in the final SSE chunk.
+type costDetailsObj struct {
+	UpstreamInferenceCost float64 `json:"upstream_inference_cost"`
+}
+
+// parseChunkUpstreamCost accepts all observed cost field shapes:
+// {"cost":{"usd":x}} (legacy), {"cost":x} (scalar), and
+// {"cost_details":{"upstream_inference_cost":x}} (current).
+func parseChunkUpstreamCost(cost json.RawMessage, details *costDetailsObj) float64 {
+	if len(cost) > 0 && string(cost) != "null" {
+		var obj struct {
+			USD float64 `json:"usd"`
+		}
+		if err := json.Unmarshal(cost, &obj); err == nil && obj.USD > 0 {
+			return obj.USD
+		}
+		var scalar float64
+		if err := json.Unmarshal(cost, &scalar); err == nil && scalar > 0 {
+			return scalar
+		}
+	}
+	if details != nil && details.UpstreamInferenceCost > 0 {
+		return details.UpstreamInferenceCost
+	}
+	return 0
 }

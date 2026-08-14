@@ -145,22 +145,34 @@ func (p *ProviderClient) ChatCompletion(ctx context.Context, req *ChatRequest) (
 // response body. It is tolerant of provider-specific usage detail fields
 // (e.g. completion_tokens_details as an object), which would otherwise make
 // the whole unmarshal fail and silently zero out billing.
+//
+// The upstream cost field has changed shape over time: it was an object
+// {"cost":{"usd":x}}, then a scalar ("cost":0 when byok) with the real
+// settlement number in cost_details.upstream_inference_cost. All three
+// shapes are accepted so margin accounting never silently zeroes.
 func parseUsage(body []byte) (*Usage, float64) {
 	var resp struct {
 		Usage struct {
 			PromptTokens     int             `json:"prompt_tokens"`
 			CompletionTokens int             `json:"completion_tokens"`
 			Details          json.RawMessage `json:"completion_tokens_details"`
+			Cost             json.RawMessage `json:"cost"`
+			CostDetails      *costDetailsObj `json:"cost_details"`
 		} `json:"usage"`
-		Cost struct {
-			USD float64 `json:"usd"`
-		} `json:"cost"`
+		Cost        json.RawMessage `json:"cost"`
+		CostDetails *costDetailsObj `json:"cost_details"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, 0
 	}
+	// Current upstream shape nests cost inside usage; older shapes put it at
+	// the top level. Prefer the nested one, fall back to the top-level one.
+	upstream := parseUpstreamCost(resp.Usage.Cost, resp.Usage.CostDetails)
+	if upstream == 0 {
+		upstream = parseUpstreamCost(resp.Cost, resp.CostDetails)
+	}
 	if resp.Usage.PromptTokens == 0 && resp.Usage.CompletionTokens == 0 {
-		return nil, resp.Cost.USD
+		return nil, upstream
 	}
 
 	u := &Usage{
@@ -174,7 +186,39 @@ func parseUsage(body []byte) (*Usage, float64) {
 		_ = json.Unmarshal(resp.Usage.Details, &reason)
 		u.ReasoningTokens = reason.ReasoningTokens
 	}
-	return u, resp.Cost.USD
+	return u, upstream
+}
+
+// costDetailsObj carries the settlement detail fields the upstream reports
+// alongside usage.
+type costDetailsObj struct {
+	UpstreamInferenceCost float64 `json:"upstream_inference_cost"`
+}
+
+// parseUpstreamCost resolves the upstream charge from any known field shape:
+//  1. {"cost":{"usd":x}} — legacy object form.
+//  2. {"cost":x} — scalar number (observed as 0 when byok).
+//  3. {"cost_details":{"upstream_inference_cost":x}} — current form.
+//
+// A zero scalar cost (shape 2) falls through to cost_details, since a real
+// zero charge only ever appears together with a detail field anyway.
+func parseUpstreamCost(cost json.RawMessage, details *costDetailsObj) float64 {
+	if len(cost) > 0 && string(cost) != "null" {
+		var obj struct {
+			USD float64 `json:"usd"`
+		}
+		if err := json.Unmarshal(cost, &obj); err == nil && obj.USD > 0 {
+			return obj.USD
+		}
+		var scalar float64
+		if err := json.Unmarshal(cost, &scalar); err == nil && scalar > 0 {
+			return scalar
+		}
+	}
+	if details != nil && details.UpstreamInferenceCost > 0 {
+		return details.UpstreamInferenceCost
+	}
+	return 0
 }
 
 // ListModels returns all models available from this provider.
