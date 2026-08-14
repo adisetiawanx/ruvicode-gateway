@@ -1,7 +1,9 @@
 package masking
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -63,5 +65,43 @@ func TestStripCostFieldStandalone(t *testing.T) {
 	var v any
 	if err := json.Unmarshal(out, &v); err != nil {
 		t.Fatalf("stripped output is not valid JSON (%v): %s", err, out)
+	}
+}
+
+// captureSlog runs fn with the default slog logger pointed at a buffer, then
+// returns what was written. The previous default is restored afterwards so
+// the rest of the suite logs normally.
+func captureSlog(t *testing.T, fn func()) string {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+	fn()
+	return buf.String()
+}
+
+// TestCheckBodyForLeaksWarnsOnForbiddenIdentifier verifies that a model body
+// which happens to mention the provider is logged as a warning, matching the
+// ADR-022 monitoring contract.
+func TestCheckBodyForLeaksWarnsOnForbiddenIdentifier(t *testing.T) {
+	out := captureSlog(t, func() {
+		CheckBodyForLeaks([]byte(`Sure, here is info about surplusintelligence dot com`), "req-1")
+	})
+	if !strings.Contains(out, "response body leak warning") {
+		t.Fatalf("expected leak warning logged, got: %s", out)
+	}
+	if !strings.Contains(out, "req-1") {
+		t.Fatalf("expected request id in warning, got: %s", out)
+	}
+}
+
+// TestCheckBodyForLeaksClean verifies a clean body produces no warning.
+func TestCheckBodyForLeaksClean(t *testing.T) {
+	out := captureSlog(t, func() {
+		CheckBodyForLeaks([]byte(`Just a normal model answer with no leaks.`), "req-2")
+	})
+	if strings.Contains(out, "response body leak warning") {
+		t.Fatalf("did not expect a warning for a clean body: %s", out)
 	}
 }
