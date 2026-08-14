@@ -6,10 +6,12 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/ruvicode/gateway/internal/pricing"
 	"github.com/ruvicode/gateway/internal/provider"
 	"github.com/ruvicode/gateway/internal/store"
@@ -250,11 +252,20 @@ func (e *Engine) FinalizeDeduction(
 }
 
 // SyncBalanceFromPostgres reads the canonical balance from Postgres and
-// writes it to the Redis cache.
+// writes it to the Redis cache. If the user does not yet have a wallet row,
+// it is created with zero balance (first top-up will credit it).
 func (e *Engine) SyncBalanceFromPostgres(ctx context.Context, userID string) error {
 	balance, held, err := e.pg.GetWalletBalanceAndHeld(ctx, userID)
 	if err != nil {
-		return err
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Wallet does not exist yet — create one with zero balance.
+			if createErr := e.pg.EnsureWallet(ctx, userID); createErr != nil {
+				return createErr
+			}
+			balance, held = 0, 0
+		} else {
+			return err
+		}
 	}
 	key := "balance:" + userID
 	e.rdb.Client.HSet(ctx, key, "balance", balance, "held", held)
