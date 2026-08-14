@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/ruvicode/gateway/internal/billing"
@@ -224,9 +225,14 @@ func (h *ChatHandler) handleNonStreamResponse(
 		RequestID:        requestID,
 	})
 
+	// Headers are built from scratch (provider headers are never copied to the
+	// client), and the masking layer re-asserts the Ruvicode-branded headers
+	// and the user's rate-limit values. SanitizeHeaders also strips any stray
+	// upstream header that a future refactor might otherwise propagate.
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Ruvicode-Request-ID", requestID)
-	w.Header().Set("X-Ruvicode-Version", "1.0")
+	limitVal, _ := strconv.Atoi(w.Header().Get("X-RateLimit-Limit"))
+	remainingVal, _ := strconv.Atoi(w.Header().Get("X-RateLimit-Remaining"))
+	masking.SanitizeHeaders(w.Header(), requestID, limitVal, remainingVal)
 	w.Header().Set("X-Cost", masking.FormatCost(actualCost))
 	w.WriteHeader(http.StatusOK)
 	// Strip the provider-reported cost object from the body (upstream cost is
