@@ -115,6 +115,13 @@ func (e *Engine) updatePrices(
 
 		userInput, userOutput, userDiscount := e.calculateUserPrice(p)
 
+		// The market feed only carries the model slug; fall back to it so the
+		// dashboard and pricing pages always have a name to render.
+		displayName := p.DisplayName
+		if displayName == "" {
+			displayName = p.Model
+		}
+
 		_, err := e.pg.Pool.Exec(ctx, `
 			INSERT INTO model_prices (
 				model, display_name, provider,
@@ -139,7 +146,7 @@ func (e *Engine) updatePrices(
 				is_active = true,
 				updated_at = NOW()
 		`,
-			p.Model, p.DisplayName, providerName,
+			p.Model, displayName, providerName,
 			p.RefInputPer1M, p.RefOutputPer1M,
 			p.ProviderInputPer1M, p.ProviderOutputPer1M,
 			userInput, userOutput,
@@ -154,7 +161,7 @@ func (e *Engine) updatePrices(
 		modelPrice := &ModelPrice{
 			Model:           p.Model,
 			Provider:        providerName,
-			DisplayName:     p.DisplayName,
+			DisplayName:     displayName,
 			UserInputPer1M:  userInput,
 			UserOutputPer1M: userOutput,
 			RefInputPer1M:   p.RefInputPer1M,
