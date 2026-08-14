@@ -39,6 +39,11 @@ func (s *Server) Routes() http.Handler {
 	// Health check (no auth).
 	r.Get("/health", s.handleHealth)
 
+	// Internal playground endpoint (shared-token auth, not rvcd_ Bearer).
+	// Used by the Next.js dashboard to run the playground against the
+	// signed-in user's own key and wallet.
+	r.Post("/internal/playground/chat", s.internal.Handle)
+
 	// Chat + models handlers.
 	chatHandler := handler.NewChatHandler(s.registry, s.billing, s.pricing, s.pg)
 	modelsHandler := handler.NewModelsHandler(s.pg)

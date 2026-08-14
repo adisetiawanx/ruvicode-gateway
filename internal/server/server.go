@@ -6,6 +6,7 @@ import (
 
 	"github.com/ruvicode/gateway/internal/billing"
 	"github.com/ruvicode/gateway/internal/config"
+	"github.com/ruvicode/gateway/internal/handler"
 	"github.com/ruvicode/gateway/internal/middleware"
 	"github.com/ruvicode/gateway/internal/pricing"
 	"github.com/ruvicode/gateway/internal/provider"
@@ -22,6 +23,7 @@ type Server struct {
 	rateLimit *middleware.RateLimitMiddleware
 	billing   *billing.Engine
 	pricing   *pricing.Engine
+	internal  *handler.InternalChatHandler
 }
 
 // New creates a Server with the given configuration, stores, and dependencies.
@@ -44,6 +46,17 @@ func New(cfg *config.Config, pg *store.PostgresStore, rdb *store.RedisStore) *Se
 		billing:   billing.New(pg, rdb),
 		pricing:   pricing.New(pg, rdb, registry, cfg.PricingSpreadPP),
 	}
+
+	// Internal playground endpoint: the dashboard calls it with the shared
+	// token and a signed-in user's key id, and the gateway bills the user's
+	// wallet through the normal pipeline. Rate limiting applies per user+key
+	// just like a regular request.
+	chatHandler := handler.NewChatHandler(registry, s.billing, s.pricing, pg)
+	s.internal = handler.NewInternalChatHandler(
+		pg,
+		s.rateLimit.Handler(http.HandlerFunc(chatHandler.Handle)),
+		cfg.InternalAPIToken,
+	)
 
 	return s
 }
