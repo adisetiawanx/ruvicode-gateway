@@ -165,10 +165,21 @@ func (h *ChatHandler) handleStreamResponse(
 	for scanner.Scan() {
 		line := scanner.Bytes()
 
-		// Never forward SSE comments or keep-alive lines (they can name
-		// upstream internals); EventSource ignores them anyway.
+		// Skip SSE comments and keep-alive lines (they can name upstream
+		// internals; EventSource ignores them anyway), but ALWAYS forward
+		// blank lines: the empty line is the SSE event terminator, and a
+		// strict parser (Vercel AI SDK, OpenCode, native EventSource)
+		// buffers until it sees one. Without it every event glues into a
+		// single blob that never dispatches.
 		trimmed := bytes.TrimSpace(line)
-		if len(trimmed) == 0 || trimmed[0] == ':' {
+		if len(trimmed) > 0 && trimmed[0] == ':' {
+			continue
+		}
+		if len(trimmed) == 0 {
+			_, _ = w.Write([]byte("\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
 			continue
 		}
 
