@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -43,6 +44,10 @@ type chatRequest struct {
 	Tools       json.RawMessage `json:"tools"`
 }
 
+// maxRequestBodyBytes caps the request body to keep oversized payloads from
+// buffering unbounded memory before the JSON decode (DoS guard).
+const maxRequestBodyBytes = 10 << 20 // 10 MB
+
 // Handle runs the full request lifecycle: parse, price, pre-check, route,
 // proxy, and settle.
 func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
@@ -50,8 +55,14 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(ctx)
 	keyData := middleware.GetAPIKey(ctx)
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	var req chatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			masking.WriteOpenAIError(w, http.StatusRequestEntityTooLarge, "invalid_request_error", "Request body too large")
+			return
+		}
 		masking.WriteOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON body")
 		return
 	}
@@ -186,14 +197,16 @@ func (h *ChatHandler) handleStreamResponse(
 	}
 	_ = result.Stream.Close()
 
+	tokens := usageTokens(usageCapture.Usage)
 	actualCost := h.billing.CalculateActualCost(modelPrice, usageCapture.Usage)
 	// Settle billing on a detached context: the request context is canceled as
 	// soon as the client closes the stream after [DONE], and billing must
 	// complete regardless (verified by E2E under concurrent load).
 	h.billing.FinalizeDeduction(context.Background(), userID, estimatedCost, actualCost, preCheck, &billing.UsageInfo{
 		Model:            modelPrice.Model,
-		PromptTokens:     usageTokens(usageCapture.Usage).prompt,
-		CompletionTokens: usageTokens(usageCapture.Usage).completion,
+		PromptTokens:     tokens.prompt,
+		CompletionTokens: tokens.completion,
+		ReasoningTokens:  tokens.reasoning,
 		APIKeyID:         keyData.KeyID,
 		UpstreamCost:     usageCapture.UpstreamCost,
 		RequestID:        requestID,
@@ -230,12 +243,14 @@ func (h *ChatHandler) handleNonStreamResponse(
 		masking.CheckBodyForLeaks(result.Body, requestID)
 	}
 
+	tokens := usageTokens(result.Usage)
 	actualCost := h.billing.CalculateActualCost(modelPrice, result.Usage)
 	// Detached context for the same reason as the streaming path.
 	h.billing.FinalizeDeduction(context.Background(), userID, estimatedCost, actualCost, preCheck, &billing.UsageInfo{
 		Model:            modelPrice.Model,
-		PromptTokens:     usageTokens(result.Usage).prompt,
-		CompletionTokens: usageTokens(result.Usage).completion,
+		PromptTokens:     tokens.prompt,
+		CompletionTokens: tokens.completion,
+		ReasoningTokens:  tokens.reasoning,
 		APIKeyID:         keyData.KeyID,
 		UpstreamCost:     result.UpstreamCost,
 		RequestID:        requestID,
@@ -286,6 +301,7 @@ func parseMessages(raw json.RawMessage) []provider.Message {
 type tokenCounts struct {
 	prompt     int
 	completion int
+	reasoning  int
 }
 
 // usageTokens safely extracts token counts from a possibly-nil Usage.
@@ -293,5 +309,5 @@ func usageTokens(u *provider.Usage) tokenCounts {
 	if u == nil {
 		return tokenCounts{}
 	}
-	return tokenCounts{prompt: u.PromptTokens, completion: u.CompletionTokens}
+	return tokenCounts{prompt: u.PromptTokens, completion: u.CompletionTokens, reasoning: u.ReasoningTokens}
 }
