@@ -50,6 +50,7 @@ type UsageInfo struct {
 	ReasoningTokens  int
 	APIKeyID         string
 	UpstreamCost     float64
+	RefCost          float64 // what the request would have cost at the reference price
 	RequestID        string
 }
 
@@ -79,6 +80,18 @@ func (e *Engine) CalculateActualCost(modelPrice *pricing.ModelPrice, usage *prov
 	}
 	inputCost := float64(usage.PromptTokens) / 1_000_000 * modelPrice.UserInputPer1M
 	outputCost := float64(usage.CompletionTokens) / 1_000_000 * modelPrice.UserOutputPer1M
+	return inputCost + outputCost
+}
+
+// CalculateRefCost computes what the same usage would have cost at the
+// reference price. Stored per request so the dashboard can show true savings
+// (reference minus user price) that do not drift when market prices move.
+func (e *Engine) CalculateRefCost(modelPrice *pricing.ModelPrice, usage *provider.Usage) float64 {
+	if usage == nil {
+		return 0
+	}
+	inputCost := float64(usage.PromptTokens) / 1_000_000 * modelPrice.RefInputPer1M
+	outputCost := float64(usage.CompletionTokens) / 1_000_000 * modelPrice.RefOutputPer1M
 	return inputCost + outputCost
 }
 
@@ -210,8 +223,8 @@ func (e *Engine) FinalizeDeduction(
 		// request as failed (no charge), release the hold, and roll the spend
 		// trackers fully back (nothing was charged).
 		_, _ = tx.Exec(ctx, `
-			INSERT INTO usage_records (id, user_id, api_key_id, model, prompt_tokens, completion_tokens, reasoning_tokens, cost, upstream_cost, request_id, status, created_at)
-			VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, 0, 0, $7, 'failed', NOW())
+			INSERT INTO usage_records (id, user_id, api_key_id, model, prompt_tokens, completion_tokens, reasoning_tokens, cost, upstream_cost, ref_cost, request_id, status, created_at)
+			VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, 0, 0, 0, $7, 'failed', NOW())
 		`,
 			userID,
 			info.APIKeyID,
@@ -230,8 +243,8 @@ func (e *Engine) FinalizeDeduction(
 
 	// Insert the usage record in the same transaction (metadata only).
 	_, err = tx.Exec(ctx, `
-		INSERT INTO usage_records (id, user_id, api_key_id, model, prompt_tokens, completion_tokens, reasoning_tokens, cost, upstream_cost, request_id, status, created_at)
-		VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, 'completed', NOW())
+		INSERT INTO usage_records (id, user_id, api_key_id, model, prompt_tokens, completion_tokens, reasoning_tokens, cost, upstream_cost, ref_cost, request_id, status, created_at)
+		VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'completed', NOW())
 	`,
 		userID,
 		info.APIKeyID,
@@ -241,6 +254,7 @@ func (e *Engine) FinalizeDeduction(
 		info.ReasoningTokens,
 		actualCost,
 		info.UpstreamCost,
+		info.RefCost,
 		info.RequestID,
 	)
 	if err != nil {

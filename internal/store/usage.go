@@ -16,6 +16,7 @@ type UsageRecord struct {
 	ReasoningTokens  int
 	Cost             float64
 	UpstreamCost     float64
+	RefCost          float64
 	RequestID        string
 	Status           string
 }
@@ -23,12 +24,12 @@ type UsageRecord struct {
 // InsertUsageRecord writes a usage record (metadata only, no prompt content).
 func (s *PostgresStore) InsertUsageRecord(ctx context.Context, record *UsageRecord) error {
 	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO usage_records (id, user_id, api_key_id, model, prompt_tokens, completion_tokens, reasoning_tokens, cost, upstream_cost, request_id, status, created_at)
-		VALUES (COALESCE($1, gen_random_uuid()::text), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+		INSERT INTO usage_records (id, user_id, api_key_id, model, prompt_tokens, completion_tokens, reasoning_tokens, cost, upstream_cost, ref_cost, request_id, status, created_at)
+		VALUES (COALESCE($1, gen_random_uuid()::text), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
 	`,
 		record.ID, record.UserID, record.APIKeyID, record.Model,
 		record.PromptTokens, record.CompletionTokens, record.ReasoningTokens,
-		record.Cost, record.UpstreamCost, record.RequestID, record.Status,
+		record.Cost, record.UpstreamCost, record.RefCost, record.RequestID, record.Status,
 	)
 	return err
 }

@@ -199,6 +199,7 @@ func (h *ChatHandler) handleStreamResponse(
 
 	tokens := usageTokens(usageCapture.Usage)
 	actualCost := h.billing.CalculateActualCost(modelPrice, usageCapture.Usage)
+	refCost := h.billing.CalculateRefCost(modelPrice, usageCapture.Usage)
 	// Settle billing on a detached context: the request context is canceled as
 	// soon as the client closes the stream after [DONE], and billing must
 	// complete regardless (verified by E2E under concurrent load).
@@ -209,6 +210,7 @@ func (h *ChatHandler) handleStreamResponse(
 		ReasoningTokens:  tokens.reasoning,
 		APIKeyID:         keyData.KeyID,
 		UpstreamCost:     usageCapture.UpstreamCost,
+		RefCost:          refCost,
 		RequestID:        requestID,
 	})
 	// Mark the key as used so the dashboard stops showing "Never".
@@ -245,6 +247,7 @@ func (h *ChatHandler) handleNonStreamResponse(
 
 	tokens := usageTokens(result.Usage)
 	actualCost := h.billing.CalculateActualCost(modelPrice, result.Usage)
+	refCost := h.billing.CalculateRefCost(modelPrice, result.Usage)
 	// Detached context for the same reason as the streaming path.
 	h.billing.FinalizeDeduction(context.Background(), userID, estimatedCost, actualCost, preCheck, &billing.UsageInfo{
 		Model:            modelPrice.Model,
@@ -253,6 +256,7 @@ func (h *ChatHandler) handleNonStreamResponse(
 		ReasoningTokens:  tokens.reasoning,
 		APIKeyID:         keyData.KeyID,
 		UpstreamCost:     result.UpstreamCost,
+		RefCost:          refCost,
 		RequestID:        requestID,
 	})
 	// Mark the key as used so the dashboard stops showing "Never".
