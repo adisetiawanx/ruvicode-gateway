@@ -32,10 +32,15 @@ type ModelsHandler struct {
 }
 
 // NewModelsHandler builds a ModelsHandler.
+//
+// The cache TTL is deliberately long (5 minutes): the list only changes when
+// the pricing worker activates or deactivates a model, which is rare. At this
+// TTL the database sees at most 12 list queries per hour no matter how hard
+// the public endpoint is hit.
 func NewModelsHandler(pg *store.PostgresStore) *ModelsHandler {
 	return &ModelsHandler{
 		pg:       pg,
-		cacheTTL: 30 * time.Second,
+		cacheTTL: 5 * time.Minute,
 	}
 }
 
