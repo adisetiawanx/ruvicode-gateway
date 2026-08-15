@@ -43,7 +43,7 @@ func New(cfg *config.Config, pg *store.PostgresStore, rdb *store.RedisStore) *Se
 		registry:  registry,
 		auth:      middleware.NewAuth(rdb, pg),
 		rateLimit: middleware.NewRateLimit(rdb),
-		billing:   billing.New(pg, rdb),
+		billing:   billing.New(pg, rdb, cfg.PricingSpreadPP),
 		pricing:   pricing.New(pg, rdb, registry, cfg.PricingSpreadPP),
 	}
 

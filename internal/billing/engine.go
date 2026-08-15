@@ -19,13 +19,19 @@ import (
 
 // Engine coordinates wallet holds and settlements.
 type Engine struct {
-	pg  *store.PostgresStore
-	rdb *store.RedisStore
+	pg         *store.PostgresStore
+	rdb        *store.RedisStore
+	spreadPP   float64 // expected margin (percentage points) used by reconciliation
 }
 
-// New builds a billing Engine.
-func New(pg *store.PostgresStore, rdb *store.RedisStore) *Engine {
-	return &Engine{pg: pg, rdb: rdb}
+// New builds a billing Engine. spreadPP is the pricing spread in percentage
+// points; reconciliation warns when the observed margin rate falls below half
+// of it. Values <= 0 fall back to the default spread of 20.
+func New(pg *store.PostgresStore, rdb *store.RedisStore, spreadPP int) *Engine {
+	if spreadPP <= 0 {
+		spreadPP = 20
+	}
+	return &Engine{pg: pg, rdb: rdb, spreadPP: float64(spreadPP)}
 }
 
 // PreCheckResult holds the state needed to finalize or release a billing hold.

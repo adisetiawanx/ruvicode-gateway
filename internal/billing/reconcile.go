@@ -84,7 +84,7 @@ func (e *Engine) ReconcileWindow(ctx context.Context, since time.Time) (*Reconci
 		return nil, fmt.Errorf("reconcile query failed: %w", err)
 	}
 
-	margin, marginPct, status := evaluateMargin(ourTotal, upstreamTotal, 20.0)
+	margin, marginPct, status := evaluateMargin(ourTotal, upstreamTotal, e.spreadPP)
 	res := &ReconcileResult{
 		Since:         since,
 		OurTotal:      ourTotal,
@@ -112,7 +112,7 @@ func (e *Engine) ReconcileWindow(ctx context.Context, since time.Time) (*Reconci
 		)
 	case ReconcileBelowExpected:
 		slog.Warn("reconciliation: margin below expected",
-			"expected_pct", 20.0,
+			"expected_pct", e.spreadPP,
 			"actual_pct", round2(marginPct),
 		)
 	}

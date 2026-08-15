@@ -44,7 +44,7 @@ func main() {
 	}
 	defer func() { _ = rdb.Close() }()
 
-	engine := billing.New(pg, rdb)
+	engine := billing.New(pg, rdb, cfg.PricingSpreadPP)
 
 	interval, err := time.ParseDuration(cfg.ReconcileCronInterval)
 	if err != nil || interval <= 0 {
