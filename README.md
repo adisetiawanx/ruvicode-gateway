@@ -24,8 +24,9 @@ Working today:
 
 Not built yet:
 
-- Anthropic-compatible message translation.
 - USDC deposit monitoring, and metrics and alerting.
+
+The public surface is the OpenAI-compatible spec only. Anthropic models are served through the same `/v1/chat/completions` endpoint.
 
 ## Stack
 
@@ -60,8 +61,6 @@ Not built yet:
 | POST | `/v1/chat/completions` | `rvcd_` key | Chat completions, streaming and non-streaming |
 | GET | `/v1/models` | `rvcd_` key | List available models |
 | POST | `/internal/playground/chat` | internal token | Dashboard playground, bills the caller's key |
-| POST | `/anthropic/v1/messages` | `rvcd_` key | Registered, not yet implemented |
-| GET | `/anthropic/v1/models` | `rvcd_` key | Registered, not yet implemented |
 
 Authenticate with a Bearer API key:
 

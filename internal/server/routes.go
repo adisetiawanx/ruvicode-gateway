@@ -18,8 +18,6 @@ import (
 // authenticated (Bearer rvcd_ key + per-key rate limit):
 //   POST /v1/chat/completions
 //   GET  /v1/models
-//   POST /anthropic/v1/messages      (registered, not yet implemented)
-//   GET  /anthropic/v1/models        (registered, not yet implemented)
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 
@@ -62,8 +60,6 @@ func (s *Server) Routes() http.Handler {
 		gr.Use(s.auth.Handler)
 		gr.Use(s.rateLimit.Handler)
 
-		gr.Post("/anthropic/v1/messages", handler.HandleNotImplemented)
-		gr.Get("/anthropic/v1/models", handler.HandleNotImplemented)
 	})
 
 	return r
