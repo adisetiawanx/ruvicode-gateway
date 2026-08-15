@@ -46,20 +46,15 @@ func (s *Server) Routes() http.Handler {
 	chatHandler := handler.NewChatHandler(s.registry, s.billing, s.pricing, s.pg)
 	modelsHandler := handler.NewModelsHandler(s.pg)
 
-	// OpenAI-compatible routes.
+	// OpenAI-compatible routes. This is the public surface; Anthropic models
+	// are served through the same /v1/chat/completions endpoint (the upstream
+	// exposes no separate Messages surface).
 	r.Group(func(gr chi.Router) {
 		gr.Use(s.auth.Handler)
 		gr.Use(s.rateLimit.Handler)
 
 		gr.Post("/v1/chat/completions", chatHandler.Handle)
 		gr.Get("/v1/models", modelsHandler.Handle)
-	})
-
-	// Anthropic-compatible routes (registered; full support is a future ADR).
-	r.Group(func(gr chi.Router) {
-		gr.Use(s.auth.Handler)
-		gr.Use(s.rateLimit.Handler)
-
 	})
 
 	return r
