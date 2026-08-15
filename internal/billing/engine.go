@@ -79,7 +79,9 @@ func (e *Engine) CalculateActualCost(modelPrice *pricing.ModelPrice, usage *prov
 // PreCheck verifies the user has sufficient balance, applies a Redis hold, and
 // checks spend limits. Returns a PreCheckResult for later finalization.
 func (e *Engine) PreCheck(ctx context.Context, userID string, estimatedCost float64, keyData *store.APIKeyData) (*PreCheckResult, error) {
-	// Spend limit checks.
+	// Spend limit checks. The Redis trackers are optimistic caches of the
+	// Postgres usage_records sums; on a Redis miss the fallback query is the
+	// authoritative number.
 	if keyData.SpendLimitDaily != nil {
 		if limit, ok := parseLimit(*keyData.SpendLimitDaily); ok {
 			spendToday, _ := e.getDailySpend(ctx, userID, keyData.KeyID)
@@ -129,10 +131,16 @@ func (e *Engine) PreCheck(ctx context.Context, userID string, estimatedCost floa
 		return nil, fmt.Errorf("insufficient balance")
 	}
 
-	// Optimistic spend tracker.
-	spendKey := "spend:" + userID + ":" + keyData.KeyID
-	e.rdb.Client.HIncrByFloat(ctx, spendKey, "daily", estimatedCost)
-	e.rdb.Client.Expire(ctx, spendKey, 24*time.Hour)
+	// Optimistic spend trackers. Both windows are written: a key with only a
+	// monthly limit must find its tracker populated too. The keys are scoped
+	// to the UTC calendar day/month so they rotate naturally at the boundary
+	// (the TTL below is cleanup only, not the reset mechanism).
+	dailyKey := spendKeyDaily(userID, keyData.KeyID)
+	monthlyKey := spendKeyMonthly(userID, keyData.KeyID)
+	e.rdb.Client.IncrByFloat(ctx, dailyKey, estimatedCost)
+	e.rdb.Client.Expire(ctx, dailyKey, 48*time.Hour)
+	e.rdb.Client.IncrByFloat(ctx, monthlyKey, estimatedCost)
+	e.rdb.Client.Expire(ctx, monthlyKey, 45*24*time.Hour)
 
 	return &PreCheckResult{
 		UserID:        userID,
@@ -142,10 +150,19 @@ func (e *Engine) PreCheck(ctx context.Context, userID string, estimatedCost floa
 	}, nil
 }
 
-// ReleaseHold releases a previously placed hold (when the request fails).
-func (e *Engine) ReleaseHold(ctx context.Context, userID string, estimatedCost float64) {
+// ReleaseHold releases a previously placed hold (when the request fails) and
+// rolls the optimistic spend trackers back so failed requests do not consume
+// the key's spend limits. A request that fails across a UTC day/month
+// boundary rolls back into the new window (sub-second edge case; the Postgres
+// fallback remains the authoritative sum).
+func (e *Engine) ReleaseHold(ctx context.Context, userID, keyID string, estimatedCost float64) {
 	key := "balance:" + userID
 	e.rdb.Client.HIncrByFloat(ctx, key, "held", -estimatedCost)
+	if keyID == "" {
+		return
+	}
+	e.rdb.Client.IncrByFloat(ctx, spendKeyDaily(userID, keyID), -estimatedCost)
+	e.rdb.Client.IncrByFloat(ctx, spendKeyMonthly(userID, keyID), -estimatedCost)
 }
 
 // FinalizeDeduction performs the atomic wallet update + usage record insert
@@ -161,7 +178,7 @@ func (e *Engine) FinalizeDeduction(
 	tx, err := e.pg.Pool.Begin(ctx)
 	if err != nil {
 		slog.Error("billing finalize: begin tx failed", "error", err)
-		e.ReleaseHold(ctx, userID, estimatedCost)
+		e.ReleaseHold(ctx, userID, info.APIKeyID, estimatedCost)
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op if committed
@@ -178,13 +195,14 @@ func (e *Engine) FinalizeDeduction(
 	`, actualCost, userID)
 	if err != nil {
 		slog.Error("billing finalize: wallet update failed", "error", err)
-		e.ReleaseHold(ctx, userID, estimatedCost)
+		e.ReleaseHold(ctx, userID, info.APIKeyID, estimatedCost)
 		return
 	}
 
 	if tag.RowsAffected() == 0 {
 		// Balance dropped below the actual cost at settlement time. Record the
-		// request as failed (no charge) and release the hold.
+		// request as failed (no charge), release the hold, and roll the spend
+		// trackers fully back (nothing was charged).
 		_, _ = tx.Exec(ctx, `
 			INSERT INTO usage_records (id, user_id, api_key_id, model, prompt_tokens, completion_tokens, reasoning_tokens, cost, upstream_cost, request_id, status, created_at)
 			VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, 0, 0, $7, 'failed', NOW())
@@ -198,7 +216,7 @@ func (e *Engine) FinalizeDeduction(
 			info.RequestID,
 		)
 		_ = tx.Commit(ctx)
-		e.ReleaseHold(ctx, userID, estimatedCost)
+		e.ReleaseHold(ctx, userID, info.APIKeyID, estimatedCost)
 		slog.Warn("billing finalize: insufficient balance at settlement",
 			"user_id", userID, "model", info.Model, "actual_cost", actualCost)
 		return
@@ -234,11 +252,14 @@ func (e *Engine) FinalizeDeduction(
 		slog.Warn("billing finalize: balance sync failed", "error", err, "user_id", userID)
 	}
 
-	// Adjust the spend tracker for the difference.
-	if diff := actualCost - estimatedCost; diff != 0 {
-		spendKey := "spend:" + userID + ":" + info.APIKeyID
-		e.rdb.Client.HIncrByFloat(ctx, spendKey, "daily", diff)
-	}
+	// Roll the optimistic spend trackers from the estimate to the actual
+	// cost. Failed and no-charge settlements roll back fully below.
+	dailyKey := spendKeyDaily(userID, info.APIKeyID)
+	monthlyKey := spendKeyMonthly(userID, info.APIKeyID)
+	e.rdb.Client.IncrByFloat(ctx, dailyKey, actualCost-estimatedCost)
+	e.rdb.Client.IncrByFloat(ctx, monthlyKey, actualCost-estimatedCost)
+	e.rdb.Client.Expire(ctx, dailyKey, 48*time.Hour)
+	e.rdb.Client.Expire(ctx, monthlyKey, 45*24*time.Hour)
 
 	slog.Info("billing_finalized",
 		"user_id", userID,
@@ -286,10 +307,22 @@ func (e *Engine) ensureBalanceCache(ctx context.Context, userID string) error {
 	return e.SyncBalanceFromPostgres(ctx, userID)
 }
 
+// spendKeyDaily returns the Redis key for the current UTC calendar day's
+// spend tracker. Scoping the key to the day (not a TTL) makes the window
+// reset itself at UTC midnight.
+func spendKeyDaily(userID, keyID string) string {
+	return "spend:" + userID + ":" + keyID + ":d" + time.Now().UTC().Format("20060102")
+}
+
+// spendKeyMonthly returns the Redis key for the current UTC calendar month's
+// spend tracker.
+func spendKeyMonthly(userID, keyID string) string {
+	return "spend:" + userID + ":" + keyID + ":m" + time.Now().UTC().Format("200601")
+}
+
 // getDailySpend returns the user's spend for the current day.
 func (e *Engine) getDailySpend(ctx context.Context, userID, keyID string) (float64, error) {
-	spendKey := "spend:" + userID + ":" + keyID
-	if spend, err := e.rdb.Client.HGet(ctx, spendKey, "daily").Float64(); err == nil {
+	if spend, err := e.rdb.Client.Get(ctx, spendKeyDaily(userID, keyID)).Float64(); err == nil {
 		return spend, nil
 	}
 	midnight := startOfDayUTC()
@@ -303,8 +336,7 @@ func (e *Engine) getDailySpend(ctx context.Context, userID, keyID string) (float
 
 // getMonthlySpend returns the user's spend for the current month.
 func (e *Engine) getMonthlySpend(ctx context.Context, userID, keyID string) (float64, error) {
-	spendKey := "spend:" + userID + ":" + keyID
-	if spend, err := e.rdb.Client.HGet(ctx, spendKey, "monthly").Float64(); err == nil {
+	if spend, err := e.rdb.Client.Get(ctx, spendKeyMonthly(userID, keyID)).Float64(); err == nil {
 		return spend, nil
 	}
 	monthStart := startOfMonthUTC()

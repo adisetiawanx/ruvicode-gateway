@@ -99,7 +99,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	// Resolve provider for this model.
 	p, err := h.registry.GetForModel(req.Model, modelPrice.Provider)
 	if err != nil {
-		h.billing.ReleaseHold(ctx, userID, estimatedCost)
+		h.billing.ReleaseHold(ctx, userID, keyData.KeyID, estimatedCost)
 		masking.WriteOpenAIError(w, http.StatusServiceUnavailable, "api_error", "Service temporarily unavailable")
 		return
 	}
@@ -117,7 +117,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	result, err := p.ChatCompletion(ctx, providerReq)
 	if err != nil {
-		h.billing.ReleaseHold(ctx, userID, estimatedCost)
+		h.billing.ReleaseHold(ctx, userID, keyData.KeyID, estimatedCost)
 		masking.WriteProviderError(w, err)
 		return
 	}
