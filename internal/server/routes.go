@@ -42,6 +42,14 @@ func (s *Server) Routes() http.Handler {
 	// signed-in user's own key and wallet.
 	r.Post("/internal/playground/chat", s.internal.Handle)
 
+	// Root /v1 endpoint: some tools probe the base URL for connectivity
+	// (OpenCode does). Answer 200 with a tiny discovery payload instead of 404.
+	r.Get("/v1", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"object":"api_root","endpoints":["/v1/chat/completions","/v1/models"],"docs":"https://ruvicode.com/docs"}`))
+	})
+
 	// Chat + models handlers.
 	chatHandler := handler.NewChatHandler(s.registry, s.billing, s.pricing, s.pg)
 	modelsHandler := handler.NewModelsHandler(s.pg)
