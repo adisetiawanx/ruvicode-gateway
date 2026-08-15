@@ -15,16 +15,17 @@ Working today:
 - Per-key sliding-window rate limiting
 - Optimistic pre-deduction billing with atomic wallet settlement
 - Streaming and non-streaming chat completions plus a model listing endpoint
+- An internal playground endpoint used by the dashboard, which resolves the caller's key, applies its limits, and bills the wallet through the normal pipeline
 - Provider abstraction with key pool rotation and identity masking
+- Upstream cost capture that tolerates every observed cost field shape (nested and top-level, object and scalar, with the settlement detail field as the source of truth)
 - Automatic price sync that polls the provider market, applies the spread, and refreshes the Postgres table and Redis cache (pricing worker)
 - Hourly billing reconciliation against the costs reported by the upstream (reconcile worker)
-- Verified live against a real provider using a cheap model
+- Verified live end to end against a real provider, including streaming, billing, and masked responses
 
 Not built yet:
 
-- API key management endpoints (key creation and revocation live in the dashboard).
 - Anthropic-compatible message translation.
-- Deployment, USDC deposit monitoring, and metrics and alerting.
+- USDC deposit monitoring, and metrics and alerting.
 
 ## Stack
 
@@ -58,6 +59,7 @@ Not built yet:
 | GET | `/health` | none | Liveness and provider health |
 | POST | `/v1/chat/completions` | `rvcd_` key | Chat completions, streaming and non-streaming |
 | GET | `/v1/models` | `rvcd_` key | List available models |
+| POST | `/internal/playground/chat` | internal token | Dashboard playground, bills the caller's key |
 | POST | `/anthropic/v1/messages` | `rvcd_` key | Registered, not yet implemented |
 | GET | `/anthropic/v1/models` | `rvcd_` key | Registered, not yet implemented |
 
@@ -119,4 +121,10 @@ Docker:
 ```bash
 docker build -t ruvicode-gateway .
 docker run --env-file .env -p 8080:8080 ruvicode-gateway
+```
+
+The pricing worker builds from the same source with its own Dockerfile:
+
+```bash
+docker build -f Dockerfile.pricing -t ruvicode-pricing .
 ```
