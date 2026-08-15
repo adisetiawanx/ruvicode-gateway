@@ -24,7 +24,27 @@ const DefaultName = "provider"
 // Content can be a plain string or an array of content blocks.
 type Message struct {
 	Role    string          `json:"role"`
-	Content json.RawMessage `json:"content"`
+	Content json.RawMessage `json:"content"` // Can be string or array of content blocks
+
+	// Tool-call fields are forwarded verbatim so agentic conversations
+	// survive the hop: without them the upstream sees tool results that
+	// reference nothing and rejects the request.
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+}
+
+// ToolCall mirrors the OpenAI function-tool-call shape on an assistant
+// message.
+type ToolCall struct {
+	ID       string     `json:"id"`
+	Type     string     `json:"type"`
+	Function ToolCallFn `json:"function"`
+}
+
+// ToolCallFn is the function part of a tool call.
+type ToolCallFn struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 // ChatRequest is the provider-agnostic request the gateway core builds after

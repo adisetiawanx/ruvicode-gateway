@@ -302,6 +302,10 @@ func messageCount(raw json.RawMessage) int {
 }
 
 // parseMessages converts the raw messages array into provider.Message values.
+// Tool-call fields ride along untouched; assistant messages carrying tool
+// calls with a null content (the exact shape the OpenAI SDK emits after a
+// tool call) are normalized to an empty string because some upstreams
+// reject that combination outright with a 400.
 func parseMessages(raw json.RawMessage) []provider.Message {
 	if len(raw) == 0 {
 		return nil
@@ -309,6 +313,13 @@ func parseMessages(raw json.RawMessage) []provider.Message {
 	var msgs []provider.Message
 	if err := json.Unmarshal(raw, &msgs); err != nil {
 		return nil
+	}
+	for i := range msgs {
+		if msgs[i].Role == "assistant" && len(msgs[i].ToolCalls) > 0 {
+			if c := msgs[i].Content; len(c) == 0 || bytes.Equal(bytes.TrimSpace(c), []byte("null")) {
+				msgs[i].Content = json.RawMessage(`""`)
+			}
+		}
 	}
 	return msgs
 }
