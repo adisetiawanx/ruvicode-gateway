@@ -1,6 +1,8 @@
 package pricing
 
 import (
+	"github.com/ruvicode/gateway/internal/catalog"
+
 	"context"
 	"fmt"
 	"log/slog"
@@ -112,6 +114,11 @@ func (e *Engine) updatePrices(
 		if p.RefInputPer1M <= 0 || p.ProviderInputPer1M <= 0 {
 			continue
 		}
+		// Curated catalog only: models outside the allowlist are never
+		// activated (and any previously-active stray is deactivated below).
+		if !catalog.IsAllowed(p.Model) {
+			continue
+		}
 
 		userInput, userOutput, userDiscount := e.calculateUserPrice(p)
 
@@ -173,7 +180,29 @@ func (e *Engine) updatePrices(
 		updated++
 	}
 
+	// Deactivate anything outside the curated catalog so /v1/models, the
+	// chat resolver, and the dashboard all tell the same story. Skipped
+	// when no store is wired (unit tests with a stub pg).
+	if e.pg != nil && e.pg.Pool != nil {
+		if _, err := e.pg.Pool.Exec(ctx, `
+			UPDATE model_prices
+			SET is_active = false
+			WHERE is_active = true AND model <> ALL($1)
+		`, allowedSlice()); err != nil {
+			slog.Warn("catalog deactivation sweep failed", "error", err)
+		}
+	}
+
 	return updated, lastErr
+}
+
+// allowedSlice returns the catalog slugs for the SQL sweep.
+func allowedSlice() []string {
+	out := make([]string, 0, len(catalog.AllowedModels))
+	for m := range catalog.AllowedModels {
+		out = append(out, m)
+	}
+	return out
 }
 
 // GetAllCachedPrices returns all active model prices for the dashboard pricing

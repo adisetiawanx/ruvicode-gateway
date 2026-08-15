@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"github.com/ruvicode/gateway/internal/catalog"
+
 	"bufio"
 	"bytes"
 	"context"
@@ -55,6 +57,11 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Model == "" {
 		masking.WriteOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Model is required")
+		return
+	}
+	// Curated catalog: the API only serves the allowlisted models.
+	if !catalog.IsAllowed(req.Model) {
+		masking.WriteOpenAIError(w, http.StatusNotFound, "invalid_request_error", "Model not found")
 		return
 	}
 
