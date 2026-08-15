@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -56,8 +57,13 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	keyData := middleware.GetAPIKey(ctx)
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		masking.WriteOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Failed to read body")
+		return
+	}
 	var req chatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(rawBody, &req); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			masking.WriteOpenAIError(w, http.StatusRequestEntityTooLarge, "invalid_request_error", "Request body too large")
@@ -113,6 +119,7 @@ func (h *ChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		Tools:       req.Tools,
 		UserID:      userID,
 		APIKeyID:    keyData.KeyID,
+		FinalBody:   h.buildForwardBody(rawBody, &req),
 	}
 
 	result, err := p.ChatCompletion(ctx, providerReq)
@@ -299,6 +306,51 @@ func messageCount(raw json.RawMessage) int {
 		return 0
 	}
 	return len(msgs)
+}
+
+
+// gatewayOwnedFields are keys the gateway itself controls on the upstream
+// request. Everything else from the client body is forwarded verbatim.
+var gatewayOwnedFields = map[string]bool{
+	"model":    true,
+	"messages": true,
+	"stream":   true,
+	// Injected below for billing (usage in the final chunk).
+	"stream_options": true,
+}
+
+// buildForwardBody takes the CLIENT's original request body and produces the
+// upstream body. All unrecognized parameters ride along untouched (the
+// OpenRouter principle: absent means omit, present means forward); the
+// gateway only rewrites what it owns.
+func (h *ChatHandler) buildForwardBody(raw []byte, req *chatRequest) json.RawMessage {
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &body); err != nil || body == nil {
+		body = map[string]json.RawMessage{}
+	}
+
+	// Messages: normalized (tool-call fix, null-content fix).
+	msgs, _ := json.Marshal(parseMessages(req.Messages))
+	body["messages"] = msgs
+	body["model"] = json.RawMessage(`"` + req.Model + `"`)
+
+	if req.Stream {
+		body["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+	} else {
+		delete(body, "stream_options")
+	}
+
+	out, err := json.Marshal(body)
+	if err != nil {
+		// Extremely defensive: fall back to the minimal known-good shape.
+		fallback, _ := json.Marshal(map[string]interface{}{
+			"model":    req.Model,
+			"messages": parseMessages(req.Messages),
+			"stream":   req.Stream,
+		})
+		return fallback
+	}
+	return out
 }
 
 // parseMessages converts the raw messages array into provider.Message values.

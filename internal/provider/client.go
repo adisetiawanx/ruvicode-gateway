@@ -66,29 +66,36 @@ func (p *ProviderClient) ChatCompletion(ctx context.Context, req *ChatRequest) (
 		return nil, ErrNoKeysAvailable
 	}
 
-	body := map[string]interface{}{
-		"model":    req.Model,
-		"messages": req.Messages,
-		"stream":   req.Stream,
-	}
-	if req.MaxTokens != nil {
-		body["max_tokens"] = *req.MaxTokens
-	}
-	if req.Temperature != nil {
-		body["temperature"] = *req.Temperature
-	}
-	if len(req.Tools) > 0 {
-		body["tools"] = json.RawMessage(req.Tools)
-	}
+	var bodyBytes []byte
+	if len(req.FinalBody) > 0 {
+		// The gateway already assembled the full upstream body from the
+		// client's original request (unknown parameters ride along).
+		bodyBytes = req.FinalBody
+	} else {
+		body := map[string]interface{}{
+			"model":    req.Model,
+			"messages": req.Messages,
+			"stream":   req.Stream,
+		}
+		if req.MaxTokens != nil {
+			body["max_tokens"] = *req.MaxTokens
+		}
+		if req.Temperature != nil {
+			body["temperature"] = *req.Temperature
+		}
+		if len(req.Tools) > 0 {
+			body["tools"] = json.RawMessage(req.Tools)
+		}
+		// Inject stream_options.include_usage so billing always has usage data.
+		if req.Stream {
+			body["stream_options"] = map[string]bool{"include_usage": true}
+		}
 
-	// Inject stream_options.include_usage so billing always has usage data.
-	if req.Stream {
-		body["stream_options"] = map[string]bool{"include_usage": true}
-	}
-
-	bodyBytes, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+		var err error
+		bodyBytes, err = json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("marshal request: %w", err)
+		}
 	}
 
 	url := p.endpoint("/chat/completions")

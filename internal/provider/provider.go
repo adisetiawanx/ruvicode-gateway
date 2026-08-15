@@ -51,6 +51,11 @@ type ToolCallFn struct {
 // auth, rate limit, and billing pre-checks. Provider-specific fields are NOT
 // forwarded upstream.
 type ChatRequest struct {
+	// FinalBody, when set, is the complete upstream JSON body built by the
+	// gateway (client body forwarded verbatim plus gateway-owned rewrites).
+	// The provider client uses it instead of assembling a partial body that
+	// would silently drop unknown client parameters.
+	FinalBody json.RawMessage
 	Model       string
 	Messages    []Message
 	Stream      bool
