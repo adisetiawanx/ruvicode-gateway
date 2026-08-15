@@ -3,4 +3,7 @@ bin/
 .git
 *.log
 Dockerfile
+Dockerfile.pricing
 .dockerignore
+scripts/
+migrations/
