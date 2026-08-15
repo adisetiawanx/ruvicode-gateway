@@ -60,7 +60,7 @@ The public surface is the OpenAI-compatible spec only. Anthropic models are serv
 |---|---|---|---|
 | GET | `/health` | none | Liveness and provider health |
 | POST | `/v1/chat/completions` | `rvcd_` key | Chat completions, streaming and non-streaming |
-| GET | `/v1/models` | `rvcd_` key | List available models |
+| GET | `/v1/models` | none | List available models (public: coding tools discover providers by fetching this without credentials) |
 | POST | `/internal/playground/chat` | internal token | Dashboard playground, bills the caller's key |
 
 Authenticate with a Bearer API key:

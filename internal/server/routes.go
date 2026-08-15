@@ -54,6 +54,11 @@ func (s *Server) Routes() http.Handler {
 	chatHandler := handler.NewChatHandler(s.registry, s.billing, s.pricing, s.pg)
 	modelsHandler := handler.NewModelsHandler(s.pg)
 
+	// Model list is PUBLIC: coding tools (OpenCode, OpenClaw, Hermes custom
+	// provider) discover custom providers by fetching {baseURL}/models
+	// without credentials. Chat completions stay strictly authenticated.
+	r.Get("/v1/models", modelsHandler.Handle)
+
 	// OpenAI-compatible routes. This is the public surface; Anthropic models
 	// are served through the same /v1/chat/completions endpoint (the upstream
 	// exposes no separate Messages surface).
@@ -62,7 +67,6 @@ func (s *Server) Routes() http.Handler {
 		gr.Use(s.rateLimit.Handler)
 
 		gr.Post("/v1/chat/completions", chatHandler.Handle)
-		gr.Get("/v1/models", modelsHandler.Handle)
 	})
 
 	return r
