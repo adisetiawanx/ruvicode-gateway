@@ -191,6 +191,8 @@ func (h *ChatHandler) handleStreamResponse(
 		UpstreamCost:     usageCapture.UpstreamCost,
 		RequestID:        requestID,
 	})
+	// Mark the key as used so the dashboard stops showing "Never".
+	h.pg.UpdateLastUsed(context.Background(), keyData.KeyID)
 
 	slog.Info("request_completed",
 		"user_id", userID,
@@ -231,6 +233,8 @@ func (h *ChatHandler) handleNonStreamResponse(
 		UpstreamCost:     result.UpstreamCost,
 		RequestID:        requestID,
 	})
+	// Mark the key as used so the dashboard stops showing "Never".
+	h.pg.UpdateLastUsed(context.Background(), keyData.KeyID)
 
 	// Headers are built from scratch (provider headers are never copied to the
 	// client), and the masking layer re-asserts the Ruvicode-branded headers
