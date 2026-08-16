@@ -38,6 +38,11 @@ const (
 	// on Base, enough to cover a typical outage. For longer gaps an
 	// operator can set the cursor to 0 for a full backfill.
 	BootstrapBlocks = 10000
+	// MaxCatchUpBlocks caps how far behind the cursor may be before it is
+	// treated as stale and fast-forwarded to the bootstrap window. Without
+	// this, a stale cursor (e.g. testnet reorg or manual experiment) would
+	// attempt an unbounded chunked catch-up that can never finish.
+	MaxCatchUpBlocks = 20000
 	// ScanChunkBlocks is the per-request block range. Alchemy free tier
 	// (Sepolia) caps eth_getLogs at 10 blocks; mainnet free allows 10k+.
 	// Five keeps us safely inside every limit.
@@ -191,6 +196,22 @@ func (m *Monitor) checkForDeposits(ctx context.Context) {
 		return
 	}
 
+	// A cursor far behind the head means the scan cannot realistically
+	// catch up chunk-by-chunk (stale testnet state, long downtime beyond
+	// the documented backfill path). Fast-forward to the bootstrap window
+	// and log loudly — deposits older than the window need a manual
+	// backfill (see ADR-035).
+	if currentBlock > lastProcessed && currentBlock-lastProcessed > MaxCatchUpBlocks {
+		slog.Warn("monitor: cursor too far behind head, fast-forwarding",
+			"cursor", lastProcessed,
+			"head", currentBlock,
+			"gap", currentBlock-lastProcessed,
+			"new_start", currentBlock-BootstrapBlocks,
+		)
+		lastProcessed = currentBlock - BootstrapBlocks
+		m.saveCursor(ctx, lastProcessed)
+	}
+
 	// Scan forward from cursor+1 in Alchemy-free-tier-safe chunks.
 	// The cursor never advances past a block that still has fewer than
 	// ConfirmationsReq confirmations. This ensures a deposit seen at
@@ -244,6 +265,15 @@ func (m *Monitor) checkForDeposits(ctx context.Context) {
 		}
 
 		m.saveCursor(ctx, chunkTo)
+
+		// Pace the scan: Alchemy free tier enforces compute units per
+		// second, and a burst of back-to-back eth_getLogs trips it. A
+		// short pause between chunks keeps the request rate friendly.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
 	}
 }
 
