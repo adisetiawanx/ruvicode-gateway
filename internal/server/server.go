@@ -26,6 +26,7 @@ type Server struct {
 	pricing   *pricing.Engine
 	internal  *handler.InternalChatHandler
 	deposit   *handler.DepositAddressHandler
+	sweep     *handler.SweepHandler
 }
 
 // New creates a Server with the given configuration, stores, and dependencies.

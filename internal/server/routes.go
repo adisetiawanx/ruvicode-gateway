@@ -47,6 +47,9 @@ func (s *Server) Routes() http.Handler {
 	if s.deposit != nil {
 		r.Get("/internal/deposit-address", s.deposit.Handle)
 	}
+	if s.sweep != nil {
+		r.Post("/internal/sweep", s.sweep.Handle)
+	}
 
 	// Root /v1 endpoint: some tools probe the base URL for connectivity
 	// (OpenCode does). Answer 200 with a tiny discovery payload instead of 404.
