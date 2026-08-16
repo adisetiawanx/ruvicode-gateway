@@ -33,7 +33,11 @@ const (
 	// a block every ~2s, so 50 blocks ≈ 100s — several poll cycles.
 	// BootstrapBlocks is how far behind the head the first scan starts
 	// when no cursor exists yet.
-	BootstrapBlocks = 100
+	// BootstrapBlocks is how far behind the head the first scan starts
+	// when no cursor exists yet. 10000 blocks ≈ 5.5 hours at 2s/block
+	// on Base, enough to cover a typical outage. For longer gaps an
+	// operator can set the cursor to 0 for a full backfill.
+	BootstrapBlocks = 10000
 	// ScanChunkBlocks is the per-request block range. Alchemy free tier
 	// (Sepolia) caps eth_getLogs at 10 blocks; mainnet free allows 10k+.
 	// Five keeps us safely inside every limit.
@@ -188,6 +192,9 @@ func (m *Monitor) checkForDeposits(ctx context.Context) {
 	}
 
 	// Scan forward from cursor+1 in Alchemy-free-tier-safe chunks.
+	// The cursor never advances past a block that still has fewer than
+	// ConfirmationsReq confirmations. This ensures a deposit seen at
+	// block N (2 confirmations) is re-scanned next cycle until it has 3.
 	from := lastProcessed + 1
 	if from > currentBlock {
 		return // Already at head
@@ -202,10 +209,17 @@ func (m *Monitor) checkForDeposits(ctx context.Context) {
 		return
 	}
 
-	for chunkFrom := from; chunkFrom <= currentBlock; chunkFrom += ScanChunkBlocks {
+	// The safe head is the newest block with enough confirmations.
+	// We never advance the cursor beyond this point.
+	safeHead := uint64(0)
+	if currentBlock > ConfirmationsReq {
+		safeHead = currentBlock - ConfirmationsReq
+	}
+
+	for chunkFrom := from; chunkFrom <= safeHead; chunkFrom += ScanChunkBlocks {
 		chunkTo := chunkFrom + ScanChunkBlocks - 1
-		if chunkTo > currentBlock {
-			chunkTo = currentBlock
+		if chunkTo > safeHead {
+			chunkTo = safeHead
 		}
 
 		query := ethereum.FilterQuery{
@@ -226,7 +240,7 @@ func (m *Monitor) checkForDeposits(ctx context.Context) {
 		}
 
 		for _, vLog := range logs {
-			m.processLog(ctx, vLog, addresses, currentBlock)
+			m.processLog(ctx, vLog, addresses, chunkTo)
 		}
 
 		m.saveCursor(ctx, chunkTo)
@@ -235,7 +249,7 @@ func (m *Monitor) checkForDeposits(ctx context.Context) {
 
 // processLog credits a deposit when the log matches one of our addresses
 // with enough confirmations.
-func (m *Monitor) processLog(ctx context.Context, vLog types.Log, addresses map[string]string, currentBlock uint64) {
+func (m *Monitor) processLog(ctx context.Context, vLog types.Log, addresses map[string]string, scanHead uint64) {
 	if len(vLog.Topics) < 3 {
 		return
 	}
@@ -259,7 +273,7 @@ func (m *Monitor) processLog(ctx context.Context, vLog types.Log, addresses map[
 		return
 	}
 
-	confirmations := currentBlock - vLog.BlockNumber
+	confirmations := scanHead - vLog.BlockNumber
 	if confirmations < ConfirmationsReq {
 		slog.Debug("monitor: deposit pending confirmation",
 			"user", userID,
