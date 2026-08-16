@@ -2,9 +2,10 @@ package wallet
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/ruvicode/gateway/internal/store"
 )
 
@@ -36,7 +37,7 @@ func (m *AddressManager) GetOrCreateAddress(ctx context.Context, userID string) 
 	if err == nil {
 		return address, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", fmt.Errorf("query deposit address: %w", err)
 	}
 
