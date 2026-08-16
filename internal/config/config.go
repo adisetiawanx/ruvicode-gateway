@@ -47,6 +47,8 @@ type Config struct {
 	BaseRPCURL       string `env:"BASE_RPC_URL" envDefault:"https://mainnet.base.org"`
 	BaseRPCFallback  string `env:"BASE_RPC_FALLBACK" envDefault:"https://mainnet.base.org"`
 	HDWalletMnemonic string `env:"HD_WALLET_MNEMONIC"`
+	USDCContract     string `env:"USDC_CONTRACT" envDefault:""`
+	MinDepositUSD    float64 `env:"MIN_DEPOSIT_USD" envDefault:"1.0"`
 
 	// Rate limiting
 	GlobalRPM int `env:"GLOBAL_RPM" envDefault:"60"`

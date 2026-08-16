@@ -40,7 +40,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	mon, err := monitor.New(cfg.BaseRPCURL, cfg.BaseRPCFallback, pg)
+	mon, err := monitor.New(cfg.BaseRPCURL, cfg.BaseRPCFallback, cfg.USDCContract, cfg.MinDepositUSD, pg)
 	if err != nil {
 		slog.Error("monitor init failed", "error", err)
 		os.Exit(1)

@@ -19,18 +19,22 @@ import (
 	"github.com/ruvicode/gateway/internal/store"
 )
 
-// USDC on Base mainnet.
+// Chain constants. The USDC contract differs between mainnet and
+// testnet, so it is configurable; these are the defaults for Base
+// mainnet (ADR-027).
 const (
-	USDCContractBase = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-	USDCDecimals     = 6
-	ConfirmationsReq = 3
-	PollInterval     = 15 * time.Second
+	USDCContractMainnet = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+	// USDCContractSepolia is Circle's testnet USDC on Base Sepolia.
+	USDCContractSepolia = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+	USDCDecimals        = 6
+	ConfirmationsReq    = 3
+	PollInterval        = 15 * time.Second
 	// LookBackBlocks covers the poll window plus reorg slack. Base emits
 	// a block every ~2s, so 50 blocks ≈ 100s — several poll cycles.
-	LookBackBlocks = 50
+	LookBackBlocks = 5 // Alchemy free tier Sepolia limits eth_getLogs to 10 blocks; 5 is safe
 	// MinDepositUSD prunes micro-deposits that cost more to track than
-	// they are worth.
-	MinDepositUSD = 1.0
+	// they are worth. Testnet drips are small, so the threshold is
+	// configurable for E2E runs.
 )
 
 // transferTopic is the Transfer(address,address,uint256) event signature.
@@ -38,15 +42,16 @@ var transferTopic = crypto.Keccak256Hash([]byte("Transfer(address,address,uint25
 
 // Monitor polls Base for USDC transfers to deposit addresses.
 type Monitor struct {
-	primary  *ethclient.Client
-	fallback *ethclient.Client
-	pg       *store.PostgresStore
-	usdc     common.Address
+	primary     *ethclient.Client
+	fallback    *ethclient.Client
+	pg          *store.PostgresStore
+	usdc        common.Address
+	minDeposit  float64
 }
 
-// New dials the primary RPC (Alchemy) and the fallback (public Base).
-// The fallback may be nil if not configured.
-func New(primaryURL, fallbackURL string, pg *store.PostgresStore) (*Monitor, error) {
+// New dials the primary RPC (Alchemy) and the fallback (public Base)
+// against the given USDC contract address.
+func New(primaryURL, fallbackURL, usdcContract string, minDeposit float64, pg *store.PostgresStore) (*Monitor, error) {
 	primary, err := ethclient.Dial(primaryURL)
 	if err != nil {
 		return nil, fmt.Errorf("connect primary RPC: %w", err)
@@ -61,11 +66,19 @@ func New(primaryURL, fallbackURL string, pg *store.PostgresStore) (*Monitor, err
 		}
 	}
 
+	if usdcContract == "" {
+		usdcContract = USDCContractMainnet
+	}
+
+	if minDeposit <= 0 {
+		minDeposit = 1.0
+	}
 	return &Monitor{
-		primary:  primary,
-		fallback: fallback,
-		pg:       pg,
-		usdc:     common.HexToAddress(USDCContractBase),
+		primary:    primary,
+		fallback:   fallback,
+		pg:         pg,
+		usdc:       common.HexToAddress(usdcContract),
+		minDeposit: minDeposit,
 	}, nil
 }
 
@@ -102,7 +115,7 @@ func (m *Monitor) Run(ctx context.Context) {
 	slog.Info("USDC deposit monitor started",
 		"poll_interval", PollInterval.String(),
 		"confirmations_required", ConfirmationsReq,
-		"min_deposit_usd", MinDepositUSD,
+		"min_deposit_usd", m.minDeposit,
 	)
 
 	ticker := time.NewTicker(PollInterval)
@@ -183,7 +196,7 @@ func (m *Monitor) processLog(ctx context.Context, vLog types.Log, addresses map[
 	)
 	amountFloat, _ := amountUSDC.Float64()
 
-	if amountFloat < MinDepositUSD {
+	if amountFloat < m.minDeposit {
 		slog.Debug("monitor: micro-deposit ignored",
 			"user", userID, "amount", amountFloat)
 		return
