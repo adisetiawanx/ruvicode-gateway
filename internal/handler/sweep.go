@@ -34,12 +34,17 @@ type sweepStore interface {
 	WriteAuditLog(ctx context.Context, email, action string, details any) error
 }
 
-// pgSweepStore implements sweepStore via *store.PostgresStore.
-type pgSweepStore struct {
+// PgSweepStore implements sweepStore via *store.PostgresStore.
+type PgSweepStore struct {
 	pg *store.PostgresStore
 }
 
-func (s *pgSweepStore) WriteAuditLog(ctx context.Context, email, action string, details any) error {
+// NewPgSweepStore builds a PgSweepStore from a PostgresStore.
+func NewPgSweepStore(pg *store.PostgresStore) *PgSweepStore {
+	return &PgSweepStore{pg: pg}
+}
+
+func (s *PgSweepStore) WriteAuditLog(ctx context.Context, email, action string, details any) error {
 	detailsJSON, _ := json.Marshal(details)
 	_, err := s.pg.Pool.Exec(ctx,
 		`INSERT INTO admin_audit_log (id, admin_email, action, details) VALUES (gen_random_uuid()::text, $1, $2, $3)`,

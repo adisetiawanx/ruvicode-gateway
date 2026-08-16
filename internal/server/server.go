@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/ruvicode/gateway/internal/billing"
@@ -10,6 +11,7 @@ import (
 	"github.com/ruvicode/gateway/internal/middleware"
 	"github.com/ruvicode/gateway/internal/pricing"
 	"github.com/ruvicode/gateway/internal/provider"
+	"github.com/ruvicode/gateway/internal/sweep"
 	"github.com/ruvicode/gateway/internal/wallet"
 	"github.com/ruvicode/gateway/internal/store"
 )
@@ -61,18 +63,32 @@ func New(cfg *config.Config, pg *store.PostgresStore, rdb *store.RedisStore) *Se
 		cfg.InternalAPIToken,
 	)
 
-	// Deposit address endpoint (ADR-027): only wired when the HD wallet
-	// mnemonic is configured. Without it the monitor is disabled anyway and
-	// addresses cannot be derived, so the endpoint answers 503.
+	// Deposit + sweep endpoints (ADR-027 + ADR-025): only wired when the
+	// HD wallet mnemonic is configured. The hd variable is shared by both.
 	if cfg.HDWalletMnemonic != "" {
-		if hd, err := wallet.NewFromMnemonic(cfg.HDWalletMnemonic); err == nil {
-			s.deposit = handler.NewDepositAddressHandler(
-				wallet.NewAddressManager(pg, hd),
-				cfg.InternalAPIToken,
-			)
-		} else {
-			// Config error: fail loudly at startup, not silently per request.
+		hd, err := wallet.NewFromMnemonic(cfg.HDWalletMnemonic)
+		if err != nil {
 			panic("invalid HD_WALLET_MNEMONIC: " + err.Error())
+		}
+		s.deposit = handler.NewDepositAddressHandler(
+			wallet.NewAddressManager(pg, hd),
+			cfg.InternalAPIToken,
+		)
+
+		// Sweep handler (ADR-025): treasury derived from mnemonic at
+		// reserved max BIP-44 index unless overridden via env.
+		treasury := cfg.TreasuryAddress
+		if treasury == "" {
+			if tAddr, _, err := hd.DeriveAddress(0x7FFFFFFF); err == nil {
+				treasury = tAddr.Hex()
+			}
+		}
+		runner, err := sweep.New(cfg.BaseRPCURL, cfg.USDCContract, treasury, cfg.SweepMinUSD, 8453, pg, hd)
+		if err != nil {
+			slog.Error("sweep runner init failed", "error", err)
+		} else {
+			s.sweep = handler.NewSweepHandler(runner, handler.NewPgSweepStore(pg), hd, treasury, cfg.InternalAPIToken)
+			slog.Info("sweep handler ready", "treasury", treasury)
 		}
 	}
 
