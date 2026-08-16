@@ -10,6 +10,7 @@ import (
 	"github.com/ruvicode/gateway/internal/middleware"
 	"github.com/ruvicode/gateway/internal/pricing"
 	"github.com/ruvicode/gateway/internal/provider"
+	"github.com/ruvicode/gateway/internal/wallet"
 	"github.com/ruvicode/gateway/internal/store"
 )
 
@@ -24,6 +25,7 @@ type Server struct {
 	billing   *billing.Engine
 	pricing   *pricing.Engine
 	internal  *handler.InternalChatHandler
+	deposit   *handler.DepositAddressHandler
 }
 
 // New creates a Server with the given configuration, stores, and dependencies.
@@ -57,6 +59,21 @@ func New(cfg *config.Config, pg *store.PostgresStore, rdb *store.RedisStore) *Se
 		s.rateLimit.Handler(http.HandlerFunc(chatHandler.Handle)),
 		cfg.InternalAPIToken,
 	)
+
+	// Deposit address endpoint (ADR-027): only wired when the HD wallet
+	// mnemonic is configured. Without it the monitor is disabled anyway and
+	// addresses cannot be derived, so the endpoint answers 503.
+	if cfg.HDWalletMnemonic != "" {
+		if hd, err := wallet.NewFromMnemonic(cfg.HDWalletMnemonic); err == nil {
+			s.deposit = handler.NewDepositAddressHandler(
+				wallet.NewAddressManager(pg, hd),
+				cfg.InternalAPIToken,
+			)
+		} else {
+			// Config error: fail loudly at startup, not silently per request.
+			panic("invalid HD_WALLET_MNEMONIC: " + err.Error())
+		}
+	}
 
 	return s
 }

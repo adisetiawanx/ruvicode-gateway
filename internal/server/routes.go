@@ -42,6 +42,12 @@ func (s *Server) Routes() http.Handler {
 	// signed-in user's own key and wallet.
 	r.Post("/internal/playground/chat", s.internal.Handle)
 
+	// Deposit address endpoint (ADR-027). Same shared-token auth; only
+	// mounted when the HD wallet is configured.
+	if s.deposit != nil {
+		r.Get("/internal/deposit-address", s.deposit.Handle)
+	}
+
 	// Root /v1 endpoint: some tools probe the base URL for connectivity
 	// (OpenCode does). Answer 200 with a tiny discovery payload instead of 404.
 	r.Get("/v1", func(w http.ResponseWriter, r *http.Request) {

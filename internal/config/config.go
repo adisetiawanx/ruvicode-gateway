@@ -43,6 +43,11 @@ type Config struct {
 	// Reconciliation (billing safety net)
 	ReconcileCronInterval string `env:"RECONCILE_CRON_INTERVAL" envDefault:"1h"`
 
+	// USDC / Base (ADR-027)
+	BaseRPCURL       string `env:"BASE_RPC_URL" envDefault:"https://mainnet.base.org"`
+	BaseRPCFallback  string `env:"BASE_RPC_FALLBACK" envDefault:"https://mainnet.base.org"`
+	HDWalletMnemonic string `env:"HD_WALLET_MNEMONIC"`
+
 	// Rate limiting
 	GlobalRPM int `env:"GLOBAL_RPM" envDefault:"60"`
 
