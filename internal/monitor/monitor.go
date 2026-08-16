@@ -31,7 +31,13 @@ const (
 	PollInterval        = 15 * time.Second
 	// LookBackBlocks covers the poll window plus reorg slack. Base emits
 	// a block every ~2s, so 50 blocks ≈ 100s — several poll cycles.
-	LookBackBlocks = 5 // Alchemy free tier Sepolia limits eth_getLogs to 10 blocks; 5 is safe
+	// BootstrapBlocks is how far behind the head the first scan starts
+	// when no cursor exists yet.
+	BootstrapBlocks = 100
+	// ScanChunkBlocks is the per-request block range. Alchemy free tier
+	// (Sepolia) caps eth_getLogs at 10 blocks; mainnet free allows 10k+.
+	// Five keeps us safely inside every limit.
+	ScanChunkBlocks = 5
 	// MinDepositUSD prunes micro-deposits that cost more to track than
 	// they are worth. Testnet drips are small, so the threshold is
 	// configurable for E2E runs.
@@ -134,7 +140,40 @@ func (m *Monitor) Run(ctx context.Context) {
 	}
 }
 
-// checkForDeposits scans the recent USDC Transfer logs for our addresses.
+// getCursor returns the last processed block, bootstrapping to
+// currentBlock - BootstrapBlocks on first run so we do not scan from
+// genesis.
+func (m *Monitor) getCursor(ctx context.Context, head uint64) (uint64, error) {
+	var last uint64
+	err := m.pg.Pool.QueryRow(ctx,
+		`SELECT last_processed_block FROM monitor_cursor WHERE id = 1`,
+	).Scan(&last)
+	if err == nil {
+		return last, nil
+	}
+	// No cursor yet: start BootstrapBlocks behind the head.
+	if head > BootstrapBlocks {
+		return head - BootstrapBlocks, nil
+	}
+	return 0, nil
+}
+
+// saveCursor persists the last processed block (best effort).
+func (m *Monitor) saveCursor(ctx context.Context, block uint64) {
+	_, err := m.pg.Pool.Exec(ctx, `
+		INSERT INTO monitor_cursor (id, last_processed_block, updated_at)
+		VALUES (1, $1, NOW())
+		ON CONFLICT (id) DO UPDATE
+		SET last_processed_block = EXCLUDED.last_processed_block, updated_at = NOW()
+	`, block)
+	if err != nil {
+		slog.Warn("monitor: save cursor failed", "error", err)
+	}
+}
+
+// checkForDeposits scans USDC Transfer logs from the persisted cursor
+// forward, so a monitor outage never loses deposits: on restart the scan
+// resumes exactly where it stopped.
 func (m *Monitor) checkForDeposits(ctx context.Context) {
 	currentBlock, err := m.blockNumberWithFallback(ctx)
 	if err != nil {
@@ -142,9 +181,16 @@ func (m *Monitor) checkForDeposits(ctx context.Context) {
 		return
 	}
 
-	fromBlock := new(big.Int).Sub(new(big.Int).SetUint64(currentBlock), big.NewInt(LookBackBlocks))
-	if fromBlock.Sign() < 0 {
-		fromBlock = big.NewInt(0)
+	lastProcessed, err := m.getCursor(ctx, currentBlock)
+	if err != nil {
+		slog.Error("monitor: read cursor failed", "error", err)
+		return
+	}
+
+	// Scan forward from cursor+1 in Alchemy-free-tier-safe chunks.
+	from := lastProcessed + 1
+	if from > currentBlock {
+		return // Already at head
 	}
 
 	addresses, err := m.getWatchedAddresses(ctx)
@@ -156,23 +202,34 @@ func (m *Monitor) checkForDeposits(ctx context.Context) {
 		return
 	}
 
-	query := ethereum.FilterQuery{
-		FromBlock: fromBlock,
-		ToBlock:   new(big.Int).SetUint64(currentBlock),
-		Addresses: []common.Address{m.usdc},
-		Topics: [][]common.Hash{
-			{transferTopic},
-		},
-	}
+	for chunkFrom := from; chunkFrom <= currentBlock; chunkFrom += ScanChunkBlocks {
+		chunkTo := chunkFrom + ScanChunkBlocks - 1
+		if chunkTo > currentBlock {
+			chunkTo = currentBlock
+		}
 
-	logs, err := m.filterLogsWithFallback(ctx, query)
-	if err != nil {
-		slog.Error("monitor: filter logs failed", "error", err)
-		return
-	}
+		query := ethereum.FilterQuery{
+			FromBlock: new(big.Int).SetUint64(chunkFrom),
+			ToBlock:   new(big.Int).SetUint64(chunkTo),
+			Addresses: []common.Address{m.usdc},
+			Topics: [][]common.Hash{
+				{transferTopic},
+			},
+		}
 
-	for _, vLog := range logs {
-		m.processLog(ctx, vLog, addresses, currentBlock)
+		logs, err := m.filterLogsWithFallback(ctx, query)
+		if err != nil {
+			slog.Error("monitor: filter logs failed",
+				"error", err,
+				"chunk", fmt.Sprintf("%d-%d", chunkFrom, chunkTo))
+			return // Cursor NOT advanced: retry this chunk next cycle.
+		}
+
+		for _, vLog := range logs {
+			m.processLog(ctx, vLog, addresses, currentBlock)
+		}
+
+		m.saveCursor(ctx, chunkTo)
 	}
 }
 
