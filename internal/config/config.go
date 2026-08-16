@@ -50,6 +50,11 @@ type Config struct {
 	USDCContract     string `env:"USDC_CONTRACT" envDefault:""`
 	MinDepositUSD    float64 `env:"MIN_DEPOSIT_USD" envDefault:"1.0"`
 
+	// Sweep (ADR-027 §9). Empty TREASURY_ADDRESS derives from the mnemonic
+	// at a reserved high index.
+	TreasuryAddress string  `env:"TREASURY_ADDRESS"`
+	SweepMinUSD     float64 `env:"SWEEP_MIN_USDC" envDefault:"1.0"`
+
 	// Rate limiting
 	GlobalRPM int `env:"GLOBAL_RPM" envDefault:"60"`
 
