@@ -14,6 +14,14 @@ build-reconcile:
 
 build-all: build build-pricing build-reconcile
 
+build-keytool:
+	@mkdir -p bin
+	go build -o bin/keytool.exe cmd/keytool/main.go
+
+build-sweep:
+	@mkdir -p bin
+	go build -o bin/sweep.exe cmd/sweep/main.go
+
 run:
 	go run cmd/gateway/main.go
 

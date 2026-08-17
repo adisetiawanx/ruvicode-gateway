@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/ecdsa"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -77,18 +78,32 @@ func New(cfg *config.Config, pg *store.PostgresStore, rdb *store.RedisStore) *Se
 
 		// Sweep handler (ADR-025): treasury derived from mnemonic at
 		// reserved max BIP-44 index unless overridden via env.
+		derivedTreasury := ""
+		var treasuryKey *ecdsa.PrivateKey
+		if tAddr, tKey, err := hd.DeriveAddress(0x7FFFFFFF); err == nil {
+			derivedTreasury = tAddr.Hex()
+			treasuryKey = tKey
+		}
 		treasury := cfg.TreasuryAddress
 		if treasury == "" {
-			if tAddr, _, err := hd.DeriveAddress(0x7FFFFFFF); err == nil {
-				treasury = tAddr.Hex()
-			}
+			treasury = derivedTreasury
 		}
-		runner, err := sweep.New(cfg.BaseRPCURL, cfg.USDCContract, treasury, cfg.SweepMinUSD, 8453, pg, hd)
-		if err != nil {
-			slog.Error("sweep runner init failed", "error", err)
+		if treasury == "" {
+			slog.Error("sweep: cannot determine treasury address")
 		} else {
-			s.sweep = handler.NewSweepHandler(runner, handler.NewPgSweepStore(pg), hd, treasury, cfg.InternalAPIToken)
-			slog.Info("sweep handler ready", "treasury", treasury)
+			runner, err := sweep.New(cfg.BaseRPCURL, cfg.USDCContract, treasury, cfg.SweepMinUSD, 8453, pg, hd)
+			if err != nil {
+				slog.Error("sweep runner init failed", "error", err)
+			} else {
+				// Gas funding only works when treasury is the derived address
+				// (we have its private key). If TREASURY_ADDRESS is overridden
+				// to a non-derived address, gas funding is disabled.
+				if treasuryKey != nil && treasury == derivedTreasury {
+					runner.SetTreasuryKey(treasuryKey)
+				}
+				s.sweep = handler.NewSweepHandler(runner, handler.NewPgSweepStore(pg), hd, treasury, cfg.InternalAPIToken)
+				slog.Info("sweep handler ready", "treasury", treasury, "gas_funding", runner.HasTreasuryKey())
+			}
 		}
 	}
 

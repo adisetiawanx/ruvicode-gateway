@@ -38,6 +38,7 @@ type sweepStore interface {
 type PgSweepStore struct{ pg *store.PostgresStore }
 
 func NewPgSweepStore(pg *store.PostgresStore) *PgSweepStore { return &PgSweepStore{pg: pg} }
+
 func (s *PgSweepStore) WriteAuditLog(ctx context.Context, email, action, operationID, status string, details any) (string, error) {
 	detailsJSON, err := json.Marshal(details)
 	if err != nil {
@@ -47,6 +48,7 @@ func (s *PgSweepStore) WriteAuditLog(ctx context.Context, email, action, operati
 	err = s.pg.Pool.QueryRow(ctx, `INSERT INTO admin_audit_log (admin_email, action, operation_id, status, details) VALUES ($1, $2, $3, $4, $5) RETURNING id`, email, action, operationID, status, detailsJSON).Scan(&id)
 	return id, err
 }
+
 func NewSweepHandler(runner *sweep.Runner, pg sweepStore, hd *wallet.HDWallet, treasury, token string) *SweepHandler {
 	return &SweepHandler{runner: runner, pg: pg, hd: hd, treasury: treasury, token: token}
 }
@@ -56,6 +58,7 @@ type sweepRequest struct {
 	PreviewID    string `json:"preview_id"`
 	Confirmation string `json:"confirmation"`
 }
+
 type sweepDryRunResult struct {
 	PreviewID         string          `json:"preview_id"`
 	ExpiresAt         time.Time       `json:"expires_at"`
@@ -82,6 +85,7 @@ type sweepAddrInfo struct {
 	Status          string  `json:"status"`
 	Reason          string  `json:"reason,omitempty"`
 }
+
 type sweepExecuteResult struct {
 	OperationID string  `json:"operation_id"`
 	Status      string  `json:"status"`
@@ -162,11 +166,13 @@ func (h *SweepHandler) Handle(w http.ResponseWriter, r *http.Request) {
 					if eth < gasPerTx {
 						info.NeedsGas = true
 						info.Action = "fund_gas_then_sweep"
-						gasNeeded += gasPerTx - eth
+						info.EstimatedGasEth = gasPerTx
+						gasNeeded += gasPerTx
 					}
 				} else {
 					info.NeedsGas = true
 					info.Action = "fund_gas_then_sweep"
+					info.EstimatedGasEth = gasPerTx
 					gasNeeded += gasPerTx
 				}
 				if res.SkippedMsg != "" {
@@ -196,22 +202,32 @@ func (h *SweepHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var total float64
+	var gasFunded float64
 	list := make([]any, 0, len(results))
 	status := "completed"
 	for _, res := range results {
+		entry := map[string]any{"address": res.Address}
+		if res.GasFunded > 0 {
+			entry["gas_funded_eth"] = res.GasFunded
+			gasFunded += res.GasFunded
+		}
 		if res.TxHash != "" && res.TxHash != "(dry-run)" {
-			list = append(list, map[string]any{"address": res.Address, "swept_usdc": res.SweptUSDC, "tx_hash": res.TxHash, "status": "submitted"})
+			entry["swept_usdc"] = res.SweptUSDC
+			entry["tx_hash"] = res.TxHash
+			entry["status"] = "submitted"
 			total += res.SweptUSDC
 		} else if res.SkippedMsg != "" {
 			status = "partial"
-			list = append(list, map[string]any{"address": res.Address, "status": "skipped", "skip_reason": res.SkippedMsg})
+			entry["status"] = "skipped"
+			entry["skip_reason"] = res.SkippedMsg
 		}
+		list = append(list, entry)
 	}
-	id, auditErr := h.pg.WriteAuditLog(r.Context(), actor, "sweep_execute_"+status, operationID, status, map[string]any{"addresses": len(list), "total_swept": total})
+	id, auditErr := h.pg.WriteAuditLog(r.Context(), actor, "sweep_execute_"+status, operationID, status, map[string]any{"addresses": len(list), "total_swept": total, "gas_funded_eth": gasFunded})
 	if auditErr != nil {
 		slog.Error("audit log failed", "error", auditErr)
 		masking.WriteOpenAIError(w, http.StatusInternalServerError, "api_error", "Audit logging failed")
 		return
 	}
-	_ = json.NewEncoder(w).Encode(sweepExecuteResult{OperationID: operationID, Status: status, Treasury: h.treasury, Results: list, TotalSwept: total, AuditID: id})
+	_ = json.NewEncoder(w).Encode(sweepExecuteResult{OperationID: operationID, Status: status, Treasury: h.treasury, Results: list, TotalSwept: total, GasFunded: gasFunded, AuditID: id})
 }
