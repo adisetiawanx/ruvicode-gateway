@@ -128,6 +128,43 @@ func (r *Runner) processEntry(ctx context.Context, e struct {
 	return res
 }
 
+func (r *Runner) ChainID() int64       { return r.chainID }
+func (r *Runner) UsdcContract() string { return r.usdc.Hex() }
+func (r *Runner) TreasuryAddr() string { return r.treasury.Hex() }
+
+// EthBalance returns the ETH balance of an address as a float in whole ETH.
+func (r *Runner) EthBalance(ctx context.Context, addrHex string) (float64, error) {
+	bal, err := r.client.BalanceAt(ctx, common.HexToAddress(addrHex), nil)
+	if err != nil {
+		return 0, err
+	}
+	return weiToEth(bal), nil
+}
+
+// UsdcBalanceOf returns the USDC balance of an address in whole dollars.
+func (r *Runner) UsdcBalanceOf(ctx context.Context, addrHex string) (float64, error) {
+	micro, err := r.usdcBalance(ctx, common.HexToAddress(addrHex))
+	if err != nil {
+		return 0, err
+	}
+	return float64(micro) / 1e6, nil
+}
+
+// EstimatedGasPerTxEth estimates the gas cost of one USDC transfer in ETH.
+func (r *Runner) EstimatedGasPerTxEth(ctx context.Context) (float64, error) {
+	price, err := r.client.SuggestGasPrice(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return weiToEth(new(big.Int).Mul(big.NewInt(80_000), price)), nil
+}
+
+func weiToEth(wei *big.Int) float64 {
+	f := new(big.Float).SetInt(wei)
+	out, _ := new(big.Float).Quo(f, big.NewFloat(1e18)).Float64()
+	return out
+}
+
 func (r *Runner) usdcBalance(ctx context.Context, addr common.Address) (int64, error) {
 	out, err := r.client.CallContract(ctx, ethereum.CallMsg{To: &r.usdc, Data: calldataBalanceOf(addr)}, nil)
 	if err != nil {

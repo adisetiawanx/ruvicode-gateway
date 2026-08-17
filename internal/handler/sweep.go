@@ -57,12 +57,30 @@ type sweepRequest struct {
 	Confirmation string `json:"confirmation"`
 }
 type sweepDryRunResult struct {
-	PreviewID      string    `json:"preview_id"`
-	ExpiresAt      time.Time `json:"expires_at"`
-	Treasury       string    `json:"treasury"`
-	Addresses      []any     `json:"addresses"`
-	TotalUSDC      float64   `json:"total_usdc"`
-	TotalGasNeeded float64   `json:"total_gas_needed_eth"`
+	PreviewID         string          `json:"preview_id"`
+	ExpiresAt         time.Time       `json:"expires_at"`
+	Network           string          `json:"network"`
+	ChainID           int64           `json:"chain_id"`
+	UsdcContract      string          `json:"usdc_contract"`
+	Treasury          string          `json:"treasury"`
+	TreasuryUsdc      float64         `json:"treasury_usdc"`
+	TreasuryEth       float64         `json:"treasury_eth"`
+	Addresses         []sweepAddrInfo `json:"addresses"`
+	TotalUSDC         float64         `json:"total_usdc"`
+	TotalGasNeededEth float64         `json:"total_gas_needed_eth"`
+	TreasuryCanFund   bool            `json:"treasury_can_fund"`
+}
+
+type sweepAddrInfo struct {
+	Address         string  `json:"address"`
+	UserID          string  `json:"user_id,omitempty"`
+	UsdcBalance     float64 `json:"usdc_balance"`
+	EthBalance      float64 `json:"eth_balance"`
+	NeedsGas        bool    `json:"needs_gas"`
+	EstimatedGasEth float64 `json:"estimated_gas_eth"`
+	Action          string  `json:"action"`
+	Status          string  `json:"status"`
+	Reason          string  `json:"reason,omitempty"`
 }
 type sweepExecuteResult struct {
 	OperationID string  `json:"operation_id"`
@@ -116,12 +134,49 @@ func (h *SweepHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	operationID := fmt.Sprintf("sweep-%d", time.Now().UnixNano())
 	w.Header().Set("Content-Type", "application/json")
 	if !req.Execute {
+		gasPerTx, gasErr := h.runner.EstimatedGasPerTxEth(r.Context())
+		if gasErr != nil {
+			slog.Error("sweep gas estimate failed", "error", gasErr)
+			gasPerTx = 0
+		}
+		treasuryEth, ethErr := h.runner.EthBalance(r.Context(), h.treasury)
+		if ethErr != nil {
+			slog.Error("treasury eth balance failed", "error", ethErr)
+			treasuryEth = 0
+		}
+		treasuryUsdc, usdcErr := h.runner.UsdcBalanceOf(r.Context(), h.treasury)
+		if usdcErr != nil {
+			slog.Error("treasury usdc balance failed", "error", usdcErr)
+			treasuryUsdc = 0
+		}
 		var total float64
-		addresses := make([]any, 0, len(results))
+		var gasNeeded float64
+		addresses := make([]sweepAddrInfo, 0, len(results))
 		for _, res := range results {
-			if res.SweptUSDC > 0 || res.SkippedMsg == "" {
-				addresses = append(addresses, map[string]any{"address": res.Address, "user_id": res.UserID, "usdc_balance": res.SweptUSDC, "needs_gas": res.SkippedMsg != "", "action": "sweep", "status": "eligible", "reason": res.SkippedMsg})
+			info := sweepAddrInfo{Address: res.Address, UserID: res.UserID, Action: "sweep", Status: "eligible"}
+			if res.SweptUSDC > 0 {
+				info.UsdcBalance = res.SweptUSDC
 				total += res.SweptUSDC
+				if eth, err := h.runner.EthBalance(r.Context(), res.Address); err == nil {
+					info.EthBalance = eth
+					if eth < gasPerTx {
+						info.NeedsGas = true
+						info.Action = "fund_gas_then_sweep"
+						gasNeeded += gasPerTx - eth
+					}
+				} else {
+					info.NeedsGas = true
+					info.Action = "fund_gas_then_sweep"
+					gasNeeded += gasPerTx
+				}
+				if res.SkippedMsg != "" {
+					info.Reason = res.SkippedMsg
+				}
+				addresses = append(addresses, info)
+			} else if res.SkippedMsg != "" {
+				info.Status = "skipped"
+				info.Reason = res.SkippedMsg
+				addresses = append(addresses, info)
 			}
 		}
 		id, auditErr := h.pg.WriteAuditLog(r.Context(), actor, "sweep_preview", operationID, "completed", map[string]any{"addresses": len(addresses), "total_usdc": total})
@@ -131,7 +186,13 @@ func (h *SweepHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = id
-		_ = json.NewEncoder(w).Encode(sweepDryRunResult{PreviewID: operationID, ExpiresAt: time.Now().Add(5 * time.Minute), Treasury: h.treasury, Addresses: addresses, TotalUSDC: total})
+		_ = json.NewEncoder(w).Encode(sweepDryRunResult{
+			PreviewID: operationID, ExpiresAt: time.Now().Add(5 * time.Minute),
+			Network: "base", ChainID: h.runner.ChainID(), UsdcContract: h.runner.UsdcContract(),
+			Treasury: h.treasury, TreasuryUsdc: treasuryUsdc, TreasuryEth: treasuryEth,
+			Addresses: addresses, TotalUSDC: total, TotalGasNeededEth: gasNeeded,
+			TreasuryCanFund: treasuryEth >= gasNeeded,
+		})
 		return
 	}
 	var total float64
