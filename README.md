@@ -32,7 +32,7 @@ Working today:
 Not built yet:
 
 - USDC deposit monitoring (ADR-027, planned)
-- Metrics and alerting (ADR-028, planned)
+- Metrics and alerting (ADR-036, planned)
 
 The public surface is the OpenAI-compatible spec only. Anthropic models are served through the same `/v1/chat/completions` endpoint.
 
