@@ -58,6 +58,11 @@ func (m *RateLimitMiddleware) Handler(next http.Handler) http.Handler {
 
 		count := countCmd.Val()
 		limit := keyData.RateLimitRPM
+		// Hard cap: the product ceiling is 3000 RPM per key. This guards
+		// against stale or manually-edited rows above the configured max.
+		if limit > 3000 {
+			limit = 3000
+		}
 		remaining := limit - int(count)
 		if remaining < 0 {
 			remaining = 0
