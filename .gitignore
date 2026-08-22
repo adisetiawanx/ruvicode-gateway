@@ -4,3 +4,4 @@ bin/
 *.log
 .DS_Store
 disperse-test.exe
+.hermes-tmp*
