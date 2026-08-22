@@ -51,7 +51,8 @@ type UsageInfo struct {
 	ReasoningTokens  int
 	CacheReadTokens  int
 	APIKeyID         string
-	UpstreamCost     float64
+	UpstreamCost     float64 // wholesale infra cost as reported (not the wallet charge)
+	MarketCost       float64 // estimated real wallet charge at marketplace best prices
 	RefCost          float64 // what the request would have cost at the reference price
 	RequestID        string
 }
@@ -134,6 +135,32 @@ func clampCacheRead(cacheRead, promptTokens int) int {
 		return promptTokens
 	}
 	return cacheRead
+}
+
+// CalculateMarketCost estimates the real wallet charge from the marketplace
+// best prices (ADR-032 supplement). The upstream-reported
+// upstream_inference_cost is wholesale infra cost, NOT what the wallet pays
+// (verified live 2026-08-22: reported $0.018 vs wallet charge $0.000027 on
+// the same request, a 681x gap). The wallet settles at market best prices
+// with cache-read pricing, so this estimate is the honest provider cost for
+// margin accounting.
+func (e *Engine) CalculateMarketCost(modelPrice *pricing.ModelPrice, usage *provider.Usage) float64 {
+	if usage == nil {
+		return 0
+	}
+	cacheRead := clampCacheRead(usage.CacheReadTokens, usage.PromptTokens)
+	cacheRate := modelPrice.ProviderCacheReadPer1M
+	if cacheRate <= 0 {
+		cacheRate = modelPrice.ProviderInputPer1M
+	}
+	billableInput := usage.PromptTokens - cacheRead
+	if billableInput < 0 {
+		billableInput = 0
+	}
+	inputCost := float64(billableInput)/1_000_000*modelPrice.ProviderInputPer1M +
+		float64(cacheRead)/1_000_000*cacheRate
+	outputCost := float64(usage.CompletionTokens) / 1_000_000 * modelPrice.ProviderOutputPer1M
+	return inputCost + outputCost
 }
 
 // PreCheck verifies the user has sufficient balance, applies a Redis hold, and
@@ -301,8 +328,8 @@ func (e *Engine) FinalizeDeduction(
 
 	// Insert the usage record in the same transaction (metadata only).
 	_, err = tx.Exec(ctx, `
-		INSERT INTO usage_records (id, user_id, api_key_id, model, prompt_tokens, completion_tokens, reasoning_tokens, cache_read_tokens, cost, upstream_cost, ref_cost, request_id, status, created_at)
-		VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'completed', NOW())
+		INSERT INTO usage_records (id, user_id, api_key_id, model, prompt_tokens, completion_tokens, reasoning_tokens, cache_read_tokens, cost, upstream_cost, market_cost, ref_cost, request_id, status, created_at)
+		VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'completed', NOW())
 	`,
 		userID,
 		info.APIKeyID,
@@ -313,6 +340,7 @@ func (e *Engine) FinalizeDeduction(
 		info.CacheReadTokens,
 		actualCost,
 		info.UpstreamCost,
+		info.MarketCost,
 		info.RefCost,
 		info.RequestID,
 	)

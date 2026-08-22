@@ -70,13 +70,19 @@ func (e *Engine) Reconcile(ctx context.Context) (*ReconcileResult, error) {
 // to UTC before binding. Without this, pgx binds a local-time go value by its
 // wall clock (e.g. 23:36 +08 instead of 15:36 UTC) and the window silently
 // misses records.
+//
+// Provider cost side: market_cost is the estimated real wallet charge
+// (marketplace best prices with cache split). For rows written before the
+// market_cost column existed it falls back to upstream_cost; those legacy
+// values are wholesale infra cost and overstate the charge, so legacy
+// windows read as conservative (lower bound on margin), never optimistic.
 func (e *Engine) ReconcileWindow(ctx context.Context, since time.Time) (*ReconcileResult, error) {
 	since = since.UTC()
 	var ourTotal, upstreamTotal float64
 	err := e.pg.Pool.QueryRow(ctx, `
 		SELECT
 			COALESCE(SUM(cost), 0),
-			COALESCE(SUM(upstream_cost), 0)
+			COALESCE(SUM(CASE WHEN market_cost > 0 THEN market_cost ELSE upstream_cost END), 0)
 		FROM usage_records
 		WHERE created_at >= $1 AND status = 'completed'
 	`, since).Scan(&ourTotal, &upstreamTotal)

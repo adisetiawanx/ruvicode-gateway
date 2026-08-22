@@ -26,8 +26,12 @@ type ModelPrice struct {
 	RefOutputPer1M     float64 `json:"ref_output_per_1m"`
 	UserCacheReadPer1M float64 `json:"user_cache_read_per_1m"`
 	RefCacheReadPer1M  float64 `json:"ref_cache_read_per_1m"`
-	DiscountPct        float64 `json:"discount_pct"`
-	UserDiscountPct    float64 `json:"user_discount_pct"`
+	// Provider (marketplace best) prices — the estimated real wallet charge.
+	ProviderInputPer1M     float64 `json:"provider_input_per_1m"`
+	ProviderOutputPer1M    float64 `json:"provider_output_per_1m"`
+	ProviderCacheReadPer1M float64 `json:"provider_cache_read_per_1m"`
+	DiscountPct            float64 `json:"discount_pct"`
+	UserDiscountPct        float64 `json:"user_discount_pct"`
 }
 
 // Engine reads and caches pricing, and runs the ADR-020 sync worker.
@@ -81,6 +85,8 @@ func (e *Engine) GetCachedPrice(ctx context.Context, model string) (*ModelPrice,
 		SELECT model, provider, display_name,
 		       user_input, user_output,
 		       ref_input, ref_output,
+		       user_cache_read_per_1m, ref_cache_read_per_1m,
+		       provider_input, provider_output, provider_cache_read_per_1m,
 		       discount_pct, user_discount_pct,
 		       is_active
 		FROM model_prices
@@ -89,6 +95,8 @@ func (e *Engine) GetCachedPrice(ctx context.Context, model string) (*ModelPrice,
 		&mp.Model, &mp.Provider, &mp.DisplayName,
 		&mp.UserInputPer1M, &mp.UserOutputPer1M,
 		&mp.RefInputPer1M, &mp.RefOutputPer1M,
+		&mp.UserCacheReadPer1M, &mp.RefCacheReadPer1M,
+		&mp.ProviderInputPer1M, &mp.ProviderOutputPer1M, &mp.ProviderCacheReadPer1M,
 		&mp.DiscountPct, &mp.UserDiscountPct,
 		&isActive,
 	)

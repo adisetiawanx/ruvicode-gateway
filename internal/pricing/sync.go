@@ -148,11 +148,11 @@ func (e *Engine) updatePrices(
 				ref_input, ref_output,
 				provider_input, provider_output,
 				user_input, user_output,
-				ref_cache_read_per_1m, user_cache_read_per_1m,
+				ref_cache_read_per_1m, user_cache_read_per_1m, provider_cache_read_per_1m,
 				discount_pct, user_discount_pct,
 				is_active, updated_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, NOW())
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true, NOW())
 			ON CONFLICT (model) DO UPDATE SET
 				display_name = EXCLUDED.display_name,
 				provider = EXCLUDED.provider,
@@ -164,6 +164,7 @@ func (e *Engine) updatePrices(
 				user_output = EXCLUDED.user_output,
 				ref_cache_read_per_1m = EXCLUDED.ref_cache_read_per_1m,
 				user_cache_read_per_1m = EXCLUDED.user_cache_read_per_1m,
+				provider_cache_read_per_1m = EXCLUDED.provider_cache_read_per_1m,
 				discount_pct = EXCLUDED.discount_pct,
 				user_discount_pct = EXCLUDED.user_discount_pct,
 				is_active = true,
@@ -173,7 +174,7 @@ func (e *Engine) updatePrices(
 			p.RefInputPer1M, p.RefOutputPer1M,
 			p.ProviderInputPer1M, p.ProviderOutputPer1M,
 			userInput, userOutput,
-			refCacheRead, userCacheRead,
+			refCacheRead, userCacheRead, p.BestCacheReadPer1M,
 			p.DiscountPct, userDiscount,
 		)
 		if err != nil {
@@ -183,17 +184,20 @@ func (e *Engine) updatePrices(
 		}
 
 		modelPrice := &ModelPrice{
-			Model:              p.Model,
-			Provider:           providerName,
-			DisplayName:        displayName,
-			UserInputPer1M:     userInput,
-			UserOutputPer1M:    userOutput,
-			RefInputPer1M:      p.RefInputPer1M,
-			RefOutputPer1M:     p.RefOutputPer1M,
-			UserCacheReadPer1M: userCacheRead,
-			RefCacheReadPer1M:  refCacheRead,
-			DiscountPct:        p.DiscountPct,
-			UserDiscountPct:    userDiscount,
+			Model:                  p.Model,
+			Provider:               providerName,
+			DisplayName:            displayName,
+			UserInputPer1M:         userInput,
+			UserOutputPer1M:        userOutput,
+			RefInputPer1M:          p.RefInputPer1M,
+			RefOutputPer1M:         p.RefOutputPer1M,
+			UserCacheReadPer1M:     userCacheRead,
+			RefCacheReadPer1M:      refCacheRead,
+			ProviderInputPer1M:     p.ProviderInputPer1M,
+			ProviderOutputPer1M:    p.ProviderOutputPer1M,
+			ProviderCacheReadPer1M: p.BestCacheReadPer1M,
+			DiscountPct:            p.DiscountPct,
+			UserDiscountPct:        userDiscount,
 		}
 		e.cachePrice(ctx, modelPrice)
 		updated++
