@@ -48,6 +48,7 @@ type UsageInfo struct {
 	PromptTokens     int
 	CompletionTokens int
 	ReasoningTokens  int
+	CacheReadTokens  int
 	APIKeyID         string
 	UpstreamCost     float64
 	RefCost          float64 // what the request would have cost at the reference price
@@ -74,11 +75,25 @@ func (e *Engine) EstimateCost(modelPrice *pricing.ModelPrice, messageCount int, 
 }
 
 // CalculateActualCost computes the real cost from usage data and cached pricing.
+// Cached input tokens bill at the model's cache read rate (ADR-032); the rest
+// of the prompt bills at the normal input rate. When the model has no cache
+// price (0), cache read tokens fall back to the normal input rate so cached
+// tokens are never free while the provider charges us the read rate.
 func (e *Engine) CalculateActualCost(modelPrice *pricing.ModelPrice, usage *provider.Usage) float64 {
 	if usage == nil {
 		return 0
 	}
-	inputCost := float64(usage.PromptTokens) / 1_000_000 * modelPrice.UserInputPer1M
+	cacheRead := clampCacheRead(usage.CacheReadTokens, usage.PromptTokens)
+	cacheRate := modelPrice.UserCacheReadPer1M
+	if cacheRate <= 0 {
+		cacheRate = modelPrice.UserInputPer1M
+	}
+	billableInput := usage.PromptTokens - cacheRead
+	if billableInput < 0 {
+		billableInput = 0
+	}
+	inputCost := float64(billableInput)/1_000_000*modelPrice.UserInputPer1M +
+		float64(cacheRead)/1_000_000*cacheRate
 	outputCost := float64(usage.CompletionTokens) / 1_000_000 * modelPrice.UserOutputPer1M
 	return inputCost + outputCost
 }
@@ -86,13 +101,38 @@ func (e *Engine) CalculateActualCost(modelPrice *pricing.ModelPrice, usage *prov
 // CalculateRefCost computes what the same usage would have cost at the
 // reference price. Stored per request so the dashboard can show true savings
 // (reference minus user price) that do not drift when market prices move.
+// Reference pricing applies the same cache split so savings from cached
+// tokens are counted honestly.
 func (e *Engine) CalculateRefCost(modelPrice *pricing.ModelPrice, usage *provider.Usage) float64 {
 	if usage == nil {
 		return 0
 	}
-	inputCost := float64(usage.PromptTokens) / 1_000_000 * modelPrice.RefInputPer1M
+	cacheRead := clampCacheRead(usage.CacheReadTokens, usage.PromptTokens)
+	cacheRate := modelPrice.RefCacheReadPer1M
+	if cacheRate <= 0 {
+		cacheRate = modelPrice.RefInputPer1M
+	}
+	billableInput := usage.PromptTokens - cacheRead
+	if billableInput < 0 {
+		billableInput = 0
+	}
+	inputCost := float64(billableInput)/1_000_000*modelPrice.RefInputPer1M +
+		float64(cacheRead)/1_000_000*cacheRate
 	outputCost := float64(usage.CompletionTokens) / 1_000_000 * modelPrice.RefOutputPer1M
 	return inputCost + outputCost
+}
+
+// clampCacheRead bounds the cache read count by the prompt size. The upstream
+// accounting can slightly overshoot (observed hit+miss above prompt_tokens),
+// and billing must never subtract more than the prompt contains.
+func clampCacheRead(cacheRead, promptTokens int) int {
+	if cacheRead < 0 {
+		return 0
+	}
+	if cacheRead > promptTokens {
+		return promptTokens
+	}
+	return cacheRead
 }
 
 // PreCheck verifies the user has sufficient balance, applies a Redis hold, and
@@ -223,8 +263,8 @@ func (e *Engine) FinalizeDeduction(
 		// request as failed (no charge), release the hold, and roll the spend
 		// trackers fully back (nothing was charged).
 		_, _ = tx.Exec(ctx, `
-			INSERT INTO usage_records (id, user_id, api_key_id, model, prompt_tokens, completion_tokens, reasoning_tokens, cost, upstream_cost, ref_cost, request_id, status, created_at)
-			VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, 0, 0, 0, $7, 'failed', NOW())
+			INSERT INTO usage_records (id, user_id, api_key_id, model, prompt_tokens, completion_tokens, reasoning_tokens, cache_read_tokens, cost, upstream_cost, ref_cost, request_id, status, created_at)
+			VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, 0, 0, 0, $8, 'failed', NOW())
 		`,
 			userID,
 			info.APIKeyID,
@@ -232,6 +272,7 @@ func (e *Engine) FinalizeDeduction(
 			info.PromptTokens,
 			info.CompletionTokens,
 			info.ReasoningTokens,
+			info.CacheReadTokens,
 			info.RequestID,
 		)
 		_ = tx.Commit(ctx)
@@ -243,8 +284,8 @@ func (e *Engine) FinalizeDeduction(
 
 	// Insert the usage record in the same transaction (metadata only).
 	_, err = tx.Exec(ctx, `
-		INSERT INTO usage_records (id, user_id, api_key_id, model, prompt_tokens, completion_tokens, reasoning_tokens, cost, upstream_cost, ref_cost, request_id, status, created_at)
-		VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'completed', NOW())
+		INSERT INTO usage_records (id, user_id, api_key_id, model, prompt_tokens, completion_tokens, reasoning_tokens, cache_read_tokens, cost, upstream_cost, ref_cost, request_id, status, created_at)
+		VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'completed', NOW())
 	`,
 		userID,
 		info.APIKeyID,
@@ -252,6 +293,7 @@ func (e *Engine) FinalizeDeduction(
 		info.PromptTokens,
 		info.CompletionTokens,
 		info.ReasoningTokens,
+		info.CacheReadTokens,
 		actualCost,
 		info.UpstreamCost,
 		info.RefCost,

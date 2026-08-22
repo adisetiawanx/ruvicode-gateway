@@ -17,15 +17,17 @@ import (
 
 // ModelPrice is the cached pricing data used by the gateway hot path.
 type ModelPrice struct {
-	Model            string  `json:"model"`
-	Provider         string  `json:"provider"`
-	DisplayName      string  `json:"display_name"`
-	UserInputPer1M   float64 `json:"user_input_per_1m"`
-	UserOutputPer1M  float64 `json:"user_output_per_1m"`
-	RefInputPer1M    float64 `json:"ref_input_per_1m"`
-	RefOutputPer1M   float64 `json:"ref_output_per_1m"`
-	DiscountPct      float64 `json:"discount_pct"`
-	UserDiscountPct  float64 `json:"user_discount_pct"`
+	Model              string  `json:"model"`
+	Provider           string  `json:"provider"`
+	DisplayName        string  `json:"display_name"`
+	UserInputPer1M     float64 `json:"user_input_per_1m"`
+	UserOutputPer1M    float64 `json:"user_output_per_1m"`
+	RefInputPer1M      float64 `json:"ref_input_per_1m"`
+	RefOutputPer1M     float64 `json:"ref_output_per_1m"`
+	UserCacheReadPer1M float64 `json:"user_cache_read_per_1m"`
+	RefCacheReadPer1M  float64 `json:"ref_cache_read_per_1m"`
+	DiscountPct        float64 `json:"discount_pct"`
+	UserDiscountPct    float64 `json:"user_discount_pct"`
 }
 
 // Engine reads and caches pricing, and runs the ADR-020 sync worker.

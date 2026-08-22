@@ -226,6 +226,7 @@ func (h *ChatHandler) handleStreamResponse(
 		PromptTokens:     tokens.prompt,
 		CompletionTokens: tokens.completion,
 		ReasoningTokens:  tokens.reasoning,
+		CacheReadTokens:  tokens.cacheRead,
 		APIKeyID:         keyData.KeyID,
 		UpstreamCost:     usageCapture.UpstreamCost,
 		RefCost:          refCost,
@@ -272,6 +273,7 @@ func (h *ChatHandler) handleNonStreamResponse(
 		PromptTokens:     tokens.prompt,
 		CompletionTokens: tokens.completion,
 		ReasoningTokens:  tokens.reasoning,
+		CacheReadTokens:  tokens.cacheRead,
 		APIKeyID:         keyData.KeyID,
 		UpstreamCost:     result.UpstreamCost,
 		RefCost:          refCost,
@@ -380,6 +382,7 @@ type tokenCounts struct {
 	prompt     int
 	completion int
 	reasoning  int
+	cacheRead  int
 }
 
 // usageTokens safely extracts token counts from a possibly-nil Usage.
@@ -387,5 +390,5 @@ func usageTokens(u *provider.Usage) tokenCounts {
 	if u == nil {
 		return tokenCounts{}
 	}
-	return tokenCounts{prompt: u.PromptTokens, completion: u.CompletionTokens, reasoning: u.ReasoningTokens}
+	return tokenCounts{prompt: u.PromptTokens, completion: u.CompletionTokens, reasoning: u.ReasoningTokens, cacheRead: u.CacheReadTokens}
 }

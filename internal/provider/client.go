@@ -163,6 +163,10 @@ func parseUsage(body []byte) (*Usage, float64) {
 			PromptTokens     int             `json:"prompt_tokens"`
 			CompletionTokens int             `json:"completion_tokens"`
 			Details          json.RawMessage `json:"completion_tokens_details"`
+			PromptDetails    json.RawMessage `json:"prompt_tokens_details"`
+			CacheHitTokens   int             `json:"prompt_cache_hit_tokens"`
+			CacheReadTokens  int             `json:"cache_read_input_tokens"`
+			CachedTokens     int             `json:"cached_tokens"`
 			Cost             json.RawMessage `json:"cost"`
 			CostDetails      *costDetailsObj `json:"cost_details"`
 		} `json:"usage"`
@@ -185,6 +189,7 @@ func parseUsage(body []byte) (*Usage, float64) {
 	u := &Usage{
 		PromptTokens:     resp.Usage.PromptTokens,
 		CompletionTokens: resp.Usage.CompletionTokens,
+		CacheReadTokens:  ParseCacheReadTokens(resp.Usage.CacheHitTokens, resp.Usage.CacheReadTokens, resp.Usage.CachedTokens, resp.Usage.PromptDetails),
 	}
 	if len(resp.Usage.Details) > 0 {
 		var reason struct {
@@ -194,6 +199,31 @@ func parseUsage(body []byte) (*Usage, float64) {
 		u.ReasoningTokens = reason.ReasoningTokens
 	}
 	return u, upstream
+}
+
+// ParseCacheReadTokens resolves the cache-read token count from the several
+// field shapes the upstream reports (often all at once). Preference order
+// matches ADR-032: OpenAI-style prompt_cache_hit_tokens, then Anthropic-style
+// cache_read_input_tokens, then cached_tokens (top-level or nested inside
+// prompt_tokens_details). Exported so both the non-streaming parser (client.go)
+// and the streaming parser (usage_capture.go) share one implementation.
+func ParseCacheReadTokens(hit, anthropicRead, cachedTop int, promptDetails json.RawMessage) int {
+	n := hit
+	if n == 0 {
+		n = anthropicRead
+	}
+	if n == 0 {
+		n = cachedTop
+	}
+	if n == 0 && len(promptDetails) > 0 {
+		var d struct {
+			CachedTokens int `json:"cached_tokens"`
+		}
+		if json.Unmarshal(promptDetails, &d) == nil {
+			n = d.CachedTokens
+		}
+	}
+	return n
 }
 
 // costDetailsObj carries the settlement detail fields the upstream reports
@@ -291,18 +321,20 @@ func (p *ProviderClient) FetchPricing(ctx context.Context) ([]PricingData, error
 
 	var raw struct {
 		Markets []struct {
-			Model             string  `json:"model"`
-			BestInputPer1M    float64 `json:"best_input_per_1m"`
-			BestOutputPer1M   float64 `json:"best_output_per_1m"`
-			DirectInputPer1M  float64 `json:"direct_input_per_1m"`
-			DirectOutputPer1M float64 `json:"direct_output_per_1m"`
+			Model               string  `json:"model"`
+			BestInputPer1M      float64 `json:"best_input_per_1m"`
+			BestOutputPer1M     float64 `json:"best_output_per_1m"`
+			BestCacheReadPer1M  float64 `json:"best_cache_read_per_1m"`
+			DirectInputPer1M    float64 `json:"direct_input_per_1m"`
+			DirectOutputPer1M   float64 `json:"direct_output_per_1m"`
 		} `json:"markets"`
 		Data []struct {
-			Model             string  `json:"model"`
-			BestInputPer1M    float64 `json:"best_input_per_1m"`
-			BestOutputPer1M   float64 `json:"best_output_per_1m"`
-			DirectInputPer1M  float64 `json:"direct_input_per_1m"`
-			DirectOutputPer1M float64 `json:"direct_output_per_1m"`
+			Model               string  `json:"model"`
+			BestInputPer1M      float64 `json:"best_input_per_1m"`
+			BestOutputPer1M     float64 `json:"best_output_per_1m"`
+			BestCacheReadPer1M  float64 `json:"best_cache_read_per_1m"`
+			DirectInputPer1M    float64 `json:"direct_input_per_1m"`
+			DirectOutputPer1M   float64 `json:"direct_output_per_1m"`
 		} `json:"data"`
 	}
 
@@ -331,7 +363,8 @@ func (p *ProviderClient) FetchPricing(ctx context.Context) ([]PricingData, error
 			RefOutputPer1M:      m.DirectOutputPer1M / 1_000_000,
 			ProviderInputPer1M:  m.BestInputPer1M / 1_000_000,
 			ProviderOutputPer1M: m.BestOutputPer1M / 1_000_000,
-			DiscountPct:         discountPct,
+			DiscountPct:        discountPct,
+			BestCacheReadPer1M:  m.BestCacheReadPer1M / 1_000_000,
 		})
 	}
 	return prices, nil

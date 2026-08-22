@@ -71,6 +71,7 @@ type Usage struct {
 	PromptTokens     int
 	CompletionTokens int
 	ReasoningTokens  int
+	CacheReadTokens  int // tokens served from prompt cache (billed at cache read rate)
 }
 
 // ChatResult is the provider's response, either streaming or complete.
@@ -95,13 +96,14 @@ type ChatResult struct {
 
 // PricingData represents a model's pricing from a provider.
 type PricingData struct {
-	Model              string
-	DisplayName        string
-	RefInputPer1M      float64 // OpenRouter reference price
-	RefOutputPer1M     float64
-	ProviderInputPer1M float64 // This provider's price
+	Model               string
+	DisplayName         string
+	RefInputPer1M       float64 // OpenRouter reference price
+	RefOutputPer1M      float64
+	ProviderInputPer1M  float64 // This provider's price
 	ProviderOutputPer1M float64
-	DiscountPct        float64 // Discount vs reference
+	DiscountPct         float64 // Discount vs reference
+	BestCacheReadPer1M  float64 // Marketplace best cache-read price (0 if none)
 }
 
 // ModelInfo represents a model's metadata.

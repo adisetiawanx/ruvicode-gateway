@@ -35,6 +35,10 @@ func (u *UsageCapture) ParseFromChunk(line []byte) {
 			PromptTokens     int             `json:"prompt_tokens"`
 			CompletionTokens int             `json:"completion_tokens"`
 			Details          json.RawMessage `json:"completion_tokens_details"`
+			PromptDetails    json.RawMessage `json:"prompt_tokens_details"`
+			CacheHitTokens   int             `json:"prompt_cache_hit_tokens"`
+			CacheReadTokens  int             `json:"cache_read_input_tokens"`
+			CachedTokens     int             `json:"cached_tokens"`
 			Cost             json.RawMessage `json:"cost"`
 			CostDetails      *costDetailsObj `json:"cost_details"`
 		} `json:"usage"`
@@ -59,6 +63,7 @@ func (u *UsageCapture) ParseFromChunk(line []byte) {
 		usage := &provider.Usage{
 			PromptTokens:     chunk.Usage.PromptTokens,
 			CompletionTokens: chunk.Usage.CompletionTokens,
+			CacheReadTokens:  provider.ParseCacheReadTokens(chunk.Usage.CacheHitTokens, chunk.Usage.CacheReadTokens, chunk.Usage.CachedTokens, chunk.Usage.PromptDetails),
 		}
 		if len(chunk.Usage.Details) > 0 {
 			var reason struct {

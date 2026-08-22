@@ -18,7 +18,11 @@ import (
 //
 // The clamp means Ruvicode never charges MORE than the reference price, even
 // if the provider discount is smaller than the spread.
-func (e *Engine) calculateUserPrice(p provider.PricingData) (input, output, userDiscount float64) {
+//
+// Cache read reference price is reconstructed from the provider best price
+// using the same discount ratio (ADR-032), since the market feed does not
+// expose a direct-list cache read price.
+func (e *Engine) calculateUserPrice(p provider.PricingData) (input, output, userDiscount, refCacheRead, userCacheRead float64) {
 	userDiscount = p.DiscountPct - float64(e.spreadPP)
 	if userDiscount < 0 {
 		userDiscount = 0
@@ -27,7 +31,16 @@ func (e *Engine) calculateUserPrice(p provider.PricingData) (input, output, user
 	input = p.RefInputPer1M * (1 - userDiscount/100)
 	output = p.RefOutputPer1M * (1 - userDiscount/100)
 
-	return input, output, userDiscount
+	// Reconstruct the reference cache read price from the provider best price
+	// and the discount ratio (ADR-032). provider_discount = 1 - best/ref, so
+	// ref = best / (1 - provider_discount). The provider discount here is in
+	// percentage points (e.g. 94.01 for glm-5.3).
+	if p.BestCacheReadPer1M > 0 && p.DiscountPct > 0 && p.DiscountPct < 100 {
+		refCacheRead = p.BestCacheReadPer1M / (1 - p.DiscountPct/100)
+		userCacheRead = refCacheRead * (1 - userDiscount/100)
+	}
+
+	return input, output, userDiscount, refCacheRead, userCacheRead
 }
 
 // SyncAllProviders fetches pricing from all registered providers, calculates
@@ -120,7 +133,7 @@ func (e *Engine) updatePrices(
 			continue
 		}
 
-		userInput, userOutput, userDiscount := e.calculateUserPrice(p)
+		userInput, userOutput, userDiscount, refCacheRead, userCacheRead := e.calculateUserPrice(p)
 
 		// The market feed only carries the model slug; fall back to it so the
 		// dashboard and pricing pages always have a name to render.
@@ -135,10 +148,11 @@ func (e *Engine) updatePrices(
 				ref_input, ref_output,
 				provider_input, provider_output,
 				user_input, user_output,
+				ref_cache_read_per_1m, user_cache_read_per_1m,
 				discount_pct, user_discount_pct,
 				is_active, updated_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, NOW())
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true, NOW())
 			ON CONFLICT (model) DO UPDATE SET
 				display_name = EXCLUDED.display_name,
 				provider = EXCLUDED.provider,
@@ -148,6 +162,8 @@ func (e *Engine) updatePrices(
 				provider_output = EXCLUDED.provider_output,
 				user_input = EXCLUDED.user_input,
 				user_output = EXCLUDED.user_output,
+				ref_cache_read_per_1m = EXCLUDED.ref_cache_read_per_1m,
+				user_cache_read_per_1m = EXCLUDED.user_cache_read_per_1m,
 				discount_pct = EXCLUDED.discount_pct,
 				user_discount_pct = EXCLUDED.user_discount_pct,
 				is_active = true,
@@ -157,6 +173,7 @@ func (e *Engine) updatePrices(
 			p.RefInputPer1M, p.RefOutputPer1M,
 			p.ProviderInputPer1M, p.ProviderOutputPer1M,
 			userInput, userOutput,
+			refCacheRead, userCacheRead,
 			p.DiscountPct, userDiscount,
 		)
 		if err != nil {
@@ -166,15 +183,17 @@ func (e *Engine) updatePrices(
 		}
 
 		modelPrice := &ModelPrice{
-			Model:           p.Model,
-			Provider:        providerName,
-			DisplayName:     displayName,
-			UserInputPer1M:  userInput,
-			UserOutputPer1M: userOutput,
-			RefInputPer1M:   p.RefInputPer1M,
-			RefOutputPer1M:  p.RefOutputPer1M,
-			DiscountPct:     p.DiscountPct,
-			UserDiscountPct: userDiscount,
+			Model:              p.Model,
+			Provider:           providerName,
+			DisplayName:        displayName,
+			UserInputPer1M:     userInput,
+			UserOutputPer1M:    userOutput,
+			RefInputPer1M:      p.RefInputPer1M,
+			RefOutputPer1M:     p.RefOutputPer1M,
+			UserCacheReadPer1M: userCacheRead,
+			RefCacheReadPer1M:  refCacheRead,
+			DiscountPct:        p.DiscountPct,
+			UserDiscountPct:    userDiscount,
 		}
 		e.cachePrice(ctx, modelPrice)
 		updated++
@@ -213,6 +232,7 @@ func (e *Engine) GetAllCachedPrices(ctx context.Context) ([]ModelPrice, error) {
 		SELECT model, provider, display_name,
 		       user_input, user_output,
 		       ref_input, ref_output,
+		       user_cache_read_per_1m, ref_cache_read_per_1m,
 		       discount_pct, user_discount_pct
 		FROM model_prices
 		WHERE is_active = true
@@ -231,6 +251,7 @@ func (e *Engine) GetAllCachedPrices(ctx context.Context) ([]ModelPrice, error) {
 			&mp.Model, &providerName, &mp.DisplayName,
 			&mp.UserInputPer1M, &mp.UserOutputPer1M,
 			&mp.RefInputPer1M, &mp.RefOutputPer1M,
+			&mp.UserCacheReadPer1M, &mp.RefCacheReadPer1M,
 			&mp.DiscountPct, &mp.UserDiscountPct,
 		); err != nil {
 			continue

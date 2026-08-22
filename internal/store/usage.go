@@ -42,20 +42,29 @@ func (s *PostgresStore) UpdateLastUsed(ctx context.Context, keyID string) {
 		"UPDATE api_keys SET last_used_at = $1 WHERE id = $2", time.Now().UTC(), keyID)
 }
 
-// ListActiveModels returns the names of all active models from model_prices.
-func (s *PostgresStore) ListActiveModels(ctx context.Context) ([]string, error) {
+// ActiveModel is an active model from model_prices with the fields the public
+// /v1/models listing needs. UserCacheReadPer1M is 0 when the model has no
+// cache read price (the API then reports null).
+type ActiveModel struct {
+	Model              string
+	UserCacheReadPer1M float64
+}
+
+// ListActiveModels returns the active models from model_prices.
+func (s *PostgresStore) ListActiveModels(ctx context.Context) ([]ActiveModel, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT model FROM model_prices WHERE is_active = true ORDER BY model
+		SELECT model, COALESCE(user_cache_read_per_1m, 0)
+		FROM model_prices WHERE is_active = true ORDER BY model
 	`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var models []string
+	var models []ActiveModel
 	for rows.Next() {
-		var m string
-		if err := rows.Scan(&m); err != nil {
+		var m ActiveModel
+		if err := rows.Scan(&m.Model, &m.UserCacheReadPer1M); err != nil {
 			return nil, err
 		}
 		models = append(models, m)

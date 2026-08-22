@@ -53,14 +53,17 @@ type modelsResponse struct {
 // tools can auto-detect models and their context windows: the standard
 // fields (id, object, created, owned_by) plus context_length and
 // max_completion_tokens, which tooling reads to size requests.
+// cache_read_price is USD per 1M cached input tokens, null when the model
+// has no cache price (ADR-032).
 type modelEntry struct {
-	ID                  string `json:"id"`
-	Object              string `json:"object"`
-	Created             int64  `json:"created"`
-	OwnedBy            string `json:"owned_by"`
-	Name                string `json:"name,omitempty"`
-	ContextLength       int    `json:"context_length"`
-	MaxCompletionTokens int    `json:"max_completion_tokens,omitempty"`
+	ID                  string   `json:"id"`
+	Object              string   `json:"object"`
+	Created             int64    `json:"created"`
+	OwnedBy            string   `json:"owned_by"`
+	Name                string   `json:"name,omitempty"`
+	ContextLength       int      `json:"context_length"`
+	MaxCompletionTokens int      `json:"max_completion_tokens,omitempty"`
+	CacheReadPrice      *float64 `json:"cache_read_price,omitempty"`
 }
 
 // Handle lists active models from the model_prices table. Context and max
@@ -87,15 +90,19 @@ func (h *ModelsHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	resp := &modelsResponse{Object: "list", Data: make([]modelEntry, 0, len(models))}
 	for _, m := range models {
 		entry := modelEntry{
-			ID:        m,
+			ID:        m.Model,
 			Object:    "model",
 			Created:   created,
 			OwnedBy:   "ruvicode",
 		}
-		if meta, ok := catalog.Meta(m); ok {
+		if meta, ok := catalog.Meta(m.Model); ok {
 			entry.Name = meta.DisplayName
 			entry.ContextLength = meta.Context
 			entry.MaxCompletionTokens = meta.MaxOutput
+		}
+		if m.UserCacheReadPer1M > 0 {
+			p := m.UserCacheReadPer1M
+			entry.CacheReadPrice = &p
 		}
 		resp.Data = append(resp.Data, entry)
 	}
