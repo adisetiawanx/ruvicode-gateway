@@ -32,6 +32,7 @@ var AllowedModels = map[string]ModelMeta{
 	"deepseek-v4-pro":        {DisplayName: "DeepSeek V4 Pro", Context: 1_048_576, MaxOutput: 384_000},
 	"glm-5.1":                {DisplayName: "GLM-5.1", Context: 200_000, MaxOutput: 128_000},
 	"glm-5.2":                {DisplayName: "GLM-5.2", Context: 1_000_000, MaxOutput: 128_000},
+	"glm-5.3":                {DisplayName: "GLM-5.3", Context: 1_000_000, MaxOutput: 128_000},
 	"grok-4.5":               {DisplayName: "Grok 4.5", Context: 500_000, MaxOutput: 128_000},
 	"grok-4.3":               {DisplayName: "Grok 4.3", Context: 1_000_000, MaxOutput: 128_000},
 	"gpt-5.6-sol":            {DisplayName: "GPT-5.6 Sol", Context: 1_050_000, MaxOutput: 128_000},

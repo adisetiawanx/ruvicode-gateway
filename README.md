@@ -21,7 +21,7 @@ Working today:
 - Optimistic pre-deduction billing with atomic wallet settlement
 - Streaming and non-streaming chat completions plus a public model listing endpoint
 - An internal playground endpoint used by the dashboard, which resolves the caller's key, applies its limits, and bills the wallet through the normal pipeline
-- A curated catalog of 33 models enforced across layers: the pricing worker only activates allowlisted slugs (sweeping strays inactive), /v1/models lists the result, and chat requests for anything outside the list are rejected before routing
+- A curated catalog of 34 models enforced across layers: the pricing worker only activates allowlisted slugs (sweeping strays inactive), /v1/models lists the result, and chat requests for anything outside the list are rejected before routing
 - Provider abstraction with key pool rotation and identity masking
 - Pass-through request forwarding: unknown client parameters ride along to the upstream verbatim, so tool calls, vision content blocks, reasoning effort, and provider-specific extras all work without gateway changes
 - Upstream cost capture that tolerates every observed cost field shape (nested and top-level, object and scalar, with the settlement detail field as the source of truth)
