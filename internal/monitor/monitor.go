@@ -213,9 +213,12 @@ func (m *Monitor) checkForDeposits(ctx context.Context) {
 	}
 
 	// Scan forward from cursor+1 in Alchemy-free-tier-safe chunks.
-	// The cursor never advances past a block that still has fewer than
-	// ConfirmationsReq confirmations. This ensures a deposit seen at
-	// block N (2 confirmations) is re-scanned next cycle until it has 3.
+	// The window never extends past safeHead = head - ConfirmationsReq,
+	// so every log inside it already has the required confirmations
+	// relative to the chain head. processLog re-checks against the head
+	// as a secondary guard; it must NEVER measure against chunkTo, or a
+	// deposit landing near a chunk boundary gets skipped while the cursor
+	// still advances past it (permanent miss).
 	from := lastProcessed + 1
 	if from > currentBlock {
 		return // Already at head
@@ -261,7 +264,7 @@ func (m *Monitor) checkForDeposits(ctx context.Context) {
 		}
 
 		for _, vLog := range logs {
-			m.processLog(ctx, vLog, addresses, chunkTo)
+			m.processLog(ctx, vLog, addresses, currentBlock)
 		}
 
 		m.saveCursor(ctx, chunkTo)
@@ -277,9 +280,12 @@ func (m *Monitor) checkForDeposits(ctx context.Context) {
 	}
 }
 
-// processLog credits a deposit when the log matches one of our addresses
-// with enough confirmations.
-func (m *Monitor) processLog(ctx context.Context, vLog types.Log, addresses map[string]string, scanHead uint64) {
+// processLog credits a deposit when the log matches one of our addresses.
+// head is the CURRENT chain head at scan time: the scan window already
+// stops at safeHead = head - ConfirmationsReq, so any log inside the
+// window has the required confirmations; the check below is a secondary
+// guard for callers that pass logs directly.
+func (m *Monitor) processLog(ctx context.Context, vLog types.Log, addresses map[string]string, head uint64) {
 	if len(vLog.Topics) < 3 {
 		return
 	}
@@ -303,12 +309,12 @@ func (m *Monitor) processLog(ctx context.Context, vLog types.Log, addresses map[
 		return
 	}
 
-	confirmations := scanHead - vLog.BlockNumber
-	if confirmations < ConfirmationsReq {
+	if vLog.BlockNumber+ConfirmationsReq > head {
 		slog.Debug("monitor: deposit pending confirmation",
 			"user", userID,
 			"amount", amountFloat,
-			"confirmations", confirmations,
+			"head", head,
+			"block", vLog.BlockNumber,
 			"required", ConfirmationsReq,
 		)
 		return

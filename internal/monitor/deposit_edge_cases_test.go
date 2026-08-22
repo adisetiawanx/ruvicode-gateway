@@ -265,3 +265,25 @@ func addrOf(h *harness, userID string) string {
 	h.t.Fatalf("no address for user %s", userID)
 	return ""
 }
+
+// TestDepositNearChunkBoundary: a deposit lands 2 blocks before the end of
+// a scan chunk. The old code measured confirmations against the chunk end
+// and skipped the log while the cursor still advanced past it, losing the
+// deposit forever. Confirmations must be measured against the chain head.
+func TestDepositNearChunkBoundary(t *testing.T) {
+	h := newHarness(t)
+	defer h.close()
+
+	h.addUser("mock-boundary-user")
+	addr := common.HexToAddress(addrOf(h, "mock-boundary-user"))
+
+	// Deposit at block 50300269 inside a chunk ending at 50300271:
+	// 2 confirmations vs the chunk end, but the chain head is at
+	// 50300400, so the deposit has 131 confirmations and must credit.
+	log := buildTransferLog(50300269, 0, addr, 10_000_000, "0xeb680c94edcab4898c9f5b28a4937ea2c577b82b5e18b071949daa9b630ca691")
+
+	h.process(50300400, log) // chain head — must credit despite chunk end at 50300271
+	if bal := h.balance("mock-boundary-user"); bal != 10 {
+		t.Errorf("balance after boundary scan = %v, want 10", bal)
+	}
+}
