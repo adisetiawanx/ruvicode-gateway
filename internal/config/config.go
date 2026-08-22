@@ -55,9 +55,6 @@ type Config struct {
 	TreasuryAddress string  `env:"TREASURY_ADDRESS"`
 	SweepMinUSD     float64 `env:"SWEEP_MIN_USDC" envDefault:"1.0"`
 
-	// Rate limiting
-	GlobalRPM int `env:"GLOBAL_RPM" envDefault:"60"`
-
 	// Logging
 	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
 }
