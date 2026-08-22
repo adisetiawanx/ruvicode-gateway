@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/redis/go-redis/v9"
 	"github.com/ruvicode/gateway/internal/pricing"
 	"github.com/ruvicode/gateway/internal/provider"
 	"github.com/ruvicode/gateway/internal/store"
@@ -172,12 +173,28 @@ func (e *Engine) PreCheck(ctx context.Context, userID string, estimatedCost floa
 	pipe := e.rdb.Client.TxPipeline()
 	pipe.HIncrByFloat(ctx, holdKey, "held", estimatedCost)
 	balCmd := pipe.HGet(ctx, holdKey, "balance")
-	if _, err := pipe.Exec(ctx); err != nil {
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		slog.Error("billing precheck: redis hold failed", "error", err, "user_id", userID)
 		return nil, fmt.Errorf("billing system temporarily unavailable")
 	}
 
-	balance, _ := balCmd.Float64()
+	balance, balErr := balCmd.Float64()
+	if errors.Is(balCmd.Err(), redis.Nil) || balErr != nil {
+		// The balance hash expired between the Exists check and this
+		// pipeline (5s TTL race): HIncrByFloat recreated it with only the
+		// held field. Re-sync the balance from Postgres (source of truth)
+		// and re-read. SyncBalanceFromPostgres never touches held, so the
+		// hold we just placed survives the refresh.
+		if err := e.SyncBalanceFromPostgres(ctx, userID); err != nil {
+			slog.Error("billing precheck: balance resync failed", "error", err, "user_id", userID)
+			return nil, fmt.Errorf("billing system temporarily unavailable")
+		}
+		balance, balErr = e.rdb.Client.HGet(ctx, holdKey, "balance").Float64()
+		if balErr != nil {
+			slog.Error("billing precheck: balance read failed", "error", balErr, "user_id", userID)
+			return nil, fmt.Errorf("billing system temporarily unavailable")
+		}
+	}
 	held, err := e.rdb.Client.HGet(ctx, holdKey, "held").Float64()
 	if err != nil {
 		held = 0
@@ -338,20 +355,23 @@ func (e *Engine) FinalizeDeduction(
 // writes it to the Redis cache. If the user does not yet have a wallet row,
 // it is created with zero balance (first top-up will credit it).
 func (e *Engine) SyncBalanceFromPostgres(ctx context.Context, userID string) error {
-	balance, held, err := e.pg.GetWalletBalanceAndHeld(ctx, userID)
+	balance, _, err := e.pg.GetWalletBalanceAndHeld(ctx, userID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Wallet does not exist yet — create one with zero balance.
 			if createErr := e.pg.EnsureWallet(ctx, userID); createErr != nil {
 				return createErr
 			}
-			balance, held = 0, 0
+			balance = 0
 		} else {
 			return err
 		}
 	}
 	key := "balance:" + userID
-	e.rdb.Client.HSet(ctx, key, "balance", balance, "held", held)
+	// HSetNX: never overwrite an existing balance field, and never touch
+	// the held field (holds placed by PreCheck live there and must survive
+	// a cache refresh). The TTL is refreshed so the hash stays warm.
+	e.rdb.Client.HSetNX(ctx, key, "balance", balance)
 	e.rdb.Client.Expire(ctx, key, 5*time.Second)
 	return nil
 }
