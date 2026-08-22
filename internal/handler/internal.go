@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 
+	"github.com/ruvicode/gateway/internal/catalog"
 	"github.com/ruvicode/gateway/internal/masking"
 	"github.com/ruvicode/gateway/internal/middleware"
 	"github.com/ruvicode/gateway/internal/store"
@@ -53,6 +55,30 @@ func NewInternalChatHandler(keys keyStore, chat http.Handler, token string) *Int
 	return &InternalChatHandler{keys: keys, chat: chat, token: token}
 }
 
+// playgroundIdentityPrompt states the model's actual identity so it does not
+// answer "which model am I" from stale training data. It reads as natural
+// facts, no product name and no prohibition-style wording, and matches the
+// prompt the web routes previously injected.
+func playgroundIdentityPrompt(displayName string) string {
+	return fmt.Sprintf(
+		"You are %s, running behind an API gateway. Your knowledge of your own version may be out of date. When the user asks which model or version they are talking to, you are %s. Keep the same tone and personality you normally have, and answer other questions as yourself.",
+		displayName, displayName,
+	)
+}
+
+// injectIdentityPrompt prepends the identity system message to the raw
+// messages JSON. A user-supplied system message, if any, is kept after it.
+func injectIdentityPrompt(rawMessages json.RawMessage, displayName string) (json.RawMessage, error) {
+	var messages []map[string]any
+	if err := json.Unmarshal(rawMessages, &messages); err != nil {
+		return nil, err
+	}
+	prepend := []map[string]any{
+		{"role": "system", "content": playgroundIdentityPrompt(displayName)},
+	}
+	return json.Marshal(append(prepend, messages...))
+}
+
 // Handle validates the shared token, resolves the user's key, injects it into
 // the request context, and delegates to the normal chat pipeline.
 func (h *InternalChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +111,20 @@ func (h *InternalChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 3b. Identity context: models name themselves from stale training data,
+	// so state the actual model here, server-side, where the browser payload
+	// never carries it. Resolved from the curated catalog's display name.
+	meta, ok := catalog.Meta(req.Model)
+	if !ok {
+		masking.WriteOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Invalid request parameters")
+		return
+	}
+	messages, err := injectIdentityPrompt(req.Messages, meta.DisplayName)
+	if err != nil {
+		masking.WriteOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Invalid request parameters")
+		return
+	}
+
 	// 4. Inject the key into the context, strip the internal fields from the
 	// body, and run the normal pipeline (rate limit, billing, provider,
 	// masking, streaming).
@@ -94,7 +134,7 @@ func (h *InternalChatHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	chatBody := map[string]any{
 		"model":       req.Model,
-		"messages":    req.Messages,
+		"messages":    messages,
 		"stream":      req.Stream,
 		"max_tokens":  req.MaxTokens,
 		"temperature": req.Temperature,

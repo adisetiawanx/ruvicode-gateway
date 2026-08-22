@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,15 +29,18 @@ type storeErr struct{}
 func (*storeErr) Error() string { return "api key not found" }
 
 // recordingChat is a stand-in for the chat pipeline; it records whether it
-// was called and what key data reached the context.
+// was called, what key data reached the context, and what body it received.
 type recordingChat struct {
 	called  bool
 	keyData *store.APIKeyData
+	body    string
 }
 
 func (c *recordingChat) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c.called = true
 	c.keyData = middleware.GetAPIKey(r.Context())
+	b, _ := io.ReadAll(r.Body)
+	c.body = string(b)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -145,6 +150,94 @@ func TestInternalChatDelegatesWithKeyInContext(t *testing.T) {
 	}
 	if chat.keyData == nil || chat.keyData.KeyID != "key-1" || chat.keyData.UserID != "user-1" {
 		t.Fatalf("expected key data in context, got %+v", chat.keyData)
+	}
+}
+
+func TestInternalChatInjectsIdentityPrompt(t *testing.T) {
+	chat := &recordingChat{}
+	key := activeTestKey("key-1", "user-1")
+	h := NewInternalChatHandler(&stubKeyStore{data: key}, chat, "sekrit")
+	rw := httptest.NewRecorder()
+
+	h.Handle(rw, internalRequest("sekrit", validInternalBody))
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rw.Code)
+	}
+
+	var body struct {
+		Model    string           `json:"model"`
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(chat.body), &body); err != nil {
+		t.Fatalf("chat body is not valid json: %v", err)
+	}
+	if len(body.Messages) != 2 {
+		t.Fatalf("expected identity system message prepended (2 messages), got %d", len(body.Messages))
+	}
+	first := body.Messages[0]
+	if first["role"] != "system" {
+		t.Fatalf("expected first message role system, got %v", first["role"])
+	}
+	content, _ := first["content"].(string)
+	if !strings.Contains(content, "You are DeepSeek V4 Flash") {
+		t.Fatalf("expected identity prompt naming DeepSeek V4 Flash, got %q", content)
+	}
+	if !strings.Contains(content, "API gateway") {
+		t.Fatalf("expected gateway context in identity prompt, got %q", content)
+	}
+	// The user's own messages stay intact, in order, after the prompt.
+	second := body.Messages[1]
+	if second["role"] != "user" || second["content"] != "hi" {
+		t.Fatalf("expected original user message preserved, got %+v", second)
+	}
+}
+
+func TestInternalChatRejectsUnknownModel(t *testing.T) {
+	chat := &recordingChat{}
+	key := activeTestKey("key-1", "user-1")
+	h := NewInternalChatHandler(&stubKeyStore{data: key}, chat, "sekrit")
+	rw := httptest.NewRecorder()
+
+	body := `{"user_id":"user-1","key_id":"key-1","model":"not-a-real-model","messages":[{"role":"user","content":"hi"}],"stream":true}`
+	h.Handle(rw, internalRequest("sekrit", body))
+
+	if rw.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a model outside the catalog, got %d", rw.Code)
+	}
+	if chat.called {
+		t.Fatal("chat pipeline must not run for an unknown model")
+	}
+}
+
+func TestInternalChatKeepsUserSystemMessage(t *testing.T) {
+	chat := &recordingChat{}
+	key := activeTestKey("key-1", "user-1")
+	h := NewInternalChatHandler(&stubKeyStore{data: key}, chat, "sekrit")
+	rw := httptest.NewRecorder()
+
+	body := `{"user_id":"user-1","key_id":"key-1","model":"glm-5.2","messages":[{"role":"system","content":"be terse"},{"role":"user","content":"hi"}],"stream":true}`
+	h.Handle(rw, internalRequest("sekrit", body))
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rw.Code)
+	}
+	var parsed struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal([]byte(chat.body), &parsed); err != nil {
+		t.Fatalf("chat body is not valid json: %v", err)
+	}
+	if len(parsed.Messages) != 3 {
+		t.Fatalf("expected 3 messages (identity + user system + user), got %d", len(parsed.Messages))
+	}
+	if parsed.Messages[1]["content"] != "be terse" {
+		t.Fatalf("expected user system message kept after identity prompt, got %+v", parsed.Messages[1])
+	}
+	first := parsed.Messages[0]
+	content, _ := first["content"].(string)
+	if !strings.Contains(content, "You are GLM-5.2") {
+		t.Fatalf("expected identity prompt naming GLM-5.2, got %q", content)
 	}
 }
 
